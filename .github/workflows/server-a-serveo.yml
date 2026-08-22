@@ -1,0 +1,201 @@
+name: Server A (Full Debug - Serveo)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: server-a-serveo
+  cancel-in-progress: true
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # =============================================
+      # مرحله ۱: نصب Flask و autossh
+      # =============================================
+      - name: Install Flask & autossh
+        run: |
+          echo "=========================================="
+          echo "📦 Installing Flask and autossh..."
+          echo "=========================================="
+          sudo apt-get update
+          sudo apt-get install -y autossh
+          pip install flask flask-cors 2>&1 | tee flask-install.log
+          echo ""
+          echo "✅ Flask and autossh installed successfully"
+          echo ""
+
+      # =============================================
+      # مرحله ۲: اجرای Flask
+      # =============================================
+      - name: Run Flask server
+        run: |
+          echo "=========================================="
+          echo "🚀 Starting Flask server..."
+          echo "=========================================="
+          nohup python server.py > flask.log 2>&1 &
+          FLASK_PID=$!
+          echo "Flask PID: $FLASK_PID"
+          echo "$FLASK_PID" > flask.pid
+          echo ""
+          echo "⏳ Waiting 5 seconds for Flask to start..."
+          sleep 5
+          echo ""
+          echo "📄 Flask log (first 30 lines):"
+          head -30 flask.log
+          echo ""
+          echo "✅ Flask is running in background (PID: $FLASK_PID)"
+
+      # =============================================
+      # مرحله ۳: تست Flask از localhost
+      # =============================================
+      - name: Test Flask from localhost
+        run: |
+          echo "=========================================="
+          echo "🧪 Testing Flask from localhost..."
+          echo "=========================================="
+          echo ""
+          echo "--- Test 1: curl http://localhost:5000/ping ---"
+          curl -v http://localhost:5000/ping 2>&1
+          CURL_EXIT=$?
+          echo ""
+          echo "--- curl exit code: $CURL_EXIT ---"
+          if [ $CURL_EXIT -eq 0 ]; then
+            echo "✅ Flask is responding on localhost:5000"
+          else
+            echo "❌ Flask is NOT responding on localhost:5000"
+            echo ""
+            echo "📄 Full flask.log:"
+            cat flask.log
+            exit 1
+          fi
+          echo ""
+
+      # =============================================
+      # مرحله ۴: اجرای تونل Serveo با نام یکتا
+      # =============================================
+      - name: Start Serveo tunnel (fixed unique name)
+        run: |
+          echo "=========================================="
+          echo "🔗 Starting Serveo tunnel..."
+          echo "=========================================="
+          echo "Name: StudyQuest-17y3-nswfi-sd1"
+          echo "Port: 5000"
+          echo ""
+          echo "--- Command: autossh -M 0 -o StrictHostKeyChecking=no -R StudyQuest-17y3-nswfi-sd1:80:localhost:5000 serveo.net ---"
+          echo ""
+          nohup autossh -M 0 -o "StrictHostKeyChecking=no" -R StudyQuest-17y3-nswfi-sd1:80:localhost:5000 serveo.net > tunnel.log 2>&1 &
+          TUNNEL_PID=$!
+          echo "Tunnel PID: $TUNNEL_PID"
+          echo "$TUNNEL_PID" > tunnel.pid
+          echo ""
+          echo "⏳ Waiting 15 seconds for tunnel to establish..."
+          sleep 15
+          echo ""
+          echo "📄 Full tunnel log:"
+          cat tunnel.log
+          echo ""
+
+      # =============================================
+      # مرحله ۵: تست تونل از داخل
+      # =============================================
+      - name: Test tunnel from localhost via tunnel
+        run: |
+          echo "=========================================="
+          echo "🌐 Testing tunnel from localhost..."
+          echo "=========================================="
+          URL="https://StudyQuest-17y3-nswfi-sd1.serveo.net"
+          echo "Testing URL: $URL/ping"
+          echo ""
+          echo "--- curl output (verbose) ---"
+          curl -v "$URL/ping" 2>&1
+          CURL_EXIT=$?
+          echo ""
+          echo "--- curl exit code: $CURL_EXIT ---"
+          if [ $CURL_EXIT -eq 0 ]; then
+            echo "✅ Tunnel is working from inside"
+          else
+            echo "❌ Tunnel is NOT working from inside"
+            echo ""
+            echo "📄 Full tunnel.log:"
+            cat tunnel.log
+            echo ""
+            echo "📄 Full flask.log:"
+            cat flask.log
+            exit 1
+          fi
+          echo ""
+
+      # =============================================
+      # مرحله ۶: نگهبان + نگهداری زنده (۵ ساعت و ۳۰ دقیقه)
+      # =============================================
+      - name: Keep alive & health-check loop (5h30m)
+        run: |
+          cd $GITHUB_WORKSPACE
+          URL="https://StudyQuest-17y3-nswfi-sd1.serveo.net"
+          echo "=========================================="
+          echo "👁️ Starting keep-alive + health checker..."
+          echo "URL: $URL"
+          echo "Total checks: 66 (5 minutes each = 5h 30m)"
+          echo "=========================================="
+          for i in $(seq 1 66); do
+            sleep 300
+            echo ""
+            echo "=========================================="
+            echo "🔍 Check $i/66 at $(date)"
+            echo "=========================================="
+
+            # چک محلی
+            echo "--- Checking localhost:5000/ping ---"
+            if curl -f -s -o /dev/null http://localhost:5000/ping; then
+              echo "✅ Flask local: OK"
+            else
+              echo "❌ Flask local: DOWN"
+              echo "⚠️ Triggering fallback..."
+              gh workflow run server-b-serveo.yml --ref main
+              exit 0
+            fi
+
+            # چک از تونل
+            echo "--- Checking $URL/ping ---"
+            if curl -f -s -o /dev/null "${URL}/ping"; then
+              echo "✅ Tunnel remote: OK"
+            else
+              echo "❌ Tunnel remote: DOWN"
+              echo "⚠️ Triggering fallback..."
+              gh workflow run server-b-serveo.yml --ref main
+              exit 0
+            fi
+
+            echo "✅ Server is alive ($i/66)"
+          done
+
+          echo ""
+          echo "=========================================="
+          echo "🔄 Time's up! Triggering Server B..."
+          echo "=========================================="
+          gh workflow run server-b-serveo.yml --ref main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # =============================================
+      # مرحله ۷: ذخیره لاگ‌ها
+      # =============================================
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-logs-serveo-a
+          path: |
+            flask-install.log
+            flask.log
+            tunnel.log
