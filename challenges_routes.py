@@ -168,8 +168,34 @@ def _default_schedule():
     }
 
 
-def _default_live_session(today):
-    return {"date": today, "participants": [], "chat": []}
+def _default_live_session(session_key, today):
+    return {"sessionKey": session_key, "date": today, "participants": [], "chat": []}
+
+
+def _session_key(schedule, today):
+    """کلید یکتای «جلسه‌ی هم‌خوانِ» فعلی: ترکیب تاریخ امروز + زمان‌های
+    دقیق فازهای checkin/study/proof از session_schedule.json.
+
+    قبلاً participants/chat فقط بر اساس «تاریخ» ریست می‌شدند، یعنی اگر
+    امروز یک جلسه (مثلاً ۱۲ تا ۱۳) برگزار می‌شد و بعد همان روز فایل
+    session_schedule.json به بازه‌ی دیگری (مثلاً ۱۸ تا ۱۹) تغییر
+    می‌کرد، چون هنوز همان «تاریخ» بود، شرکت‌کننده‌ها/چتِ جلسه‌ی قبلی
+    (confirmed/proofSent) دست‌نخورده می‌ماند و عملاً جلسه‌ی جدید بلوکه
+    می‌شد تا نیمه‌شب. حالا کلید بر اساس خودِ زمان‌های فاز هم حساب
+    می‌شود، پس هر بار که زمان‌ها در فایل عوض شوند (حتی چند بار در یک
+    روز) یک جلسه‌ی هم‌خوانِ کاملاً تازه (بدون شرکت‌کننده/چتِ قبلی)
+    ساخته می‌شود — دقیقاً هر تایمی که در فایل نوشته شود، همان جلسه
+    برگزار می‌شود."""
+    phases = schedule.get("phases", {})
+    checkin = phases.get("checkin", {})
+    study = phases.get("study", {})
+    proof = phases.get("proof", {})
+    return "{}|{}-{}|{}-{}|{}-{}".format(
+        today,
+        checkin.get("start", ""), checkin.get("end", ""),
+        study.get("start", ""), study.get("end", ""),
+        proof.get("start", ""), proof.get("end", ""),
+    )
 
 
 def _default_streak_record():
@@ -427,11 +453,12 @@ def _format_timer(seconds):
     return "{:02d}:{:02d}".format(m, s)
 
 
-def _get_live_session(today):
-    session = _read_json(LIVE_SESSION_FILE, _default_live_session(today))
-    if session.get("date") != today:
-        # روز عوض شده؛ ریست روزانه
-        session = _default_live_session(today)
+def _get_live_session(today, schedule):
+    session_key = _session_key(schedule, today)
+    session = _read_json(LIVE_SESSION_FILE, _default_live_session(session_key, today))
+    if session.get("sessionKey") != session_key:
+        # روز یا بازه‌ی زمانیِ جلسه عوض شده؛ ریست
+        session = _default_live_session(session_key, today)
         _write_json(LIVE_SESSION_FILE, session)
     return session
 
@@ -498,7 +525,7 @@ def challenges_state():
     days_left = max(0, (week_end - today).days)
 
     # --- جلسه‌ی زنده -----------------------------------------------
-    live_session = _get_live_session(today_str)
+    live_session = _get_live_session(today_str, schedule)
     phase = _current_phase(schedule, now_local.time())
     seconds_left = _seconds_until_phase_end(schedule, phase, now_local)
 
@@ -553,9 +580,11 @@ def challenges_checkin():
     display = _user_display(user_id)
 
     with _file_lock:
-        session = _read_json_locked(LIVE_SESSION_FILE, _default_live_session(today_str))
-        if session.get("date") != today_str:
-            session = _default_live_session(today_str)
+        schedule = _read_json_locked(SCHEDULE_FILE, _default_schedule())
+        session_key = _session_key(schedule, today_str)
+        session = _read_json_locked(LIVE_SESSION_FILE, _default_live_session(session_key, today_str))
+        if session.get("sessionKey") != session_key:
+            session = _default_live_session(session_key, today_str)
 
         participants = session.setdefault("participants", [])
         existing = next((p for p in participants if p.get("userId") == user_id), None)
@@ -598,9 +627,11 @@ def challenges_chat():
     }
 
     with _file_lock:
-        session = _read_json_locked(LIVE_SESSION_FILE, _default_live_session(today_str))
-        if session.get("date") != today_str:
-            session = _default_live_session(today_str)
+        schedule = _read_json_locked(SCHEDULE_FILE, _default_schedule())
+        session_key = _session_key(schedule, today_str)
+        session = _read_json_locked(LIVE_SESSION_FILE, _default_live_session(session_key, today_str))
+        if session.get("sessionKey") != session_key:
+            session = _default_live_session(session_key, today_str)
 
         chat = session.setdefault("chat", [])
         chat.append(message)
@@ -638,9 +669,11 @@ def challenges_proof():
     display = _user_display(user_id)
 
     with _file_lock:
-        session = _read_json_locked(LIVE_SESSION_FILE, _default_live_session(today_str))
-        if session.get("date") != today_str:
-            session = _default_live_session(today_str)
+        schedule = _read_json_locked(SCHEDULE_FILE, _default_schedule())
+        session_key = _session_key(schedule, today_str)
+        session = _read_json_locked(LIVE_SESSION_FILE, _default_live_session(session_key, today_str))
+        if session.get("sessionKey") != session_key:
+            session = _default_live_session(session_key, today_str)
 
         participants = session.setdefault("participants", [])
         existing = next((p for p in participants if p.get("userId") == user_id), None)
@@ -667,5 +700,6 @@ def challenges_proof():
 
 def ensure_initial_files():
     _read_json(STREAK_FILE, {})
-    _read_json(SCHEDULE_FILE, _default_schedule())
-    _read_json(LIVE_SESSION_FILE, _default_live_session(_today_str()))
+    schedule = _read_json(SCHEDULE_FILE, _default_schedule())
+    today_str = _today_str()
+    _read_json(LIVE_SESSION_FILE, _default_live_session(_session_key(schedule, today_str), today_str))
