@@ -1,0 +1,134 @@
+name: StudyQuest Server (Production Ready)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: studyquest-server
+  cancel-in-progress: true
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # =============================================
+      # نصب Flask و autossh
+      # =============================================
+      - name: Install Flask & autossh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autossh
+          pip install flask flask-cors
+
+      # =============================================
+      # اجرای سرور اصلی (از فایل server.py)
+      # =============================================
+      - name: Run main Flask server
+        run: |
+          echo "=========================================="
+          echo "🚀 Starting StudyQuest Server..."
+          echo "=========================================="
+          # اطمینان از وجود فایل‌های JSON
+          touch users.json events.json progress.json version.txt 2>/dev/null || true
+          nohup python server.py > flask.log 2>&1 &
+          sleep 5
+          curl -f http://localhost:5000/ping || exit 1
+          echo "✅ Server is running"
+
+      # =============================================
+      # راه‌اندازی تونل Serveo با زیردامنه‌ی ثابت
+      # =============================================
+      - name: Start Serveo tunnel
+        id: tunnel
+        run: |
+          echo "=========================================="
+          echo "🔗 Starting Serveo tunnel..."
+          echo "Subdomain: studyquest-real"
+          echo "=========================================="
+          autossh -M 0 -o "StrictHostKeyChecking=no" -R studyquest-real:80:localhost:5000 serveo.net &
+          sleep 10
+          URL="https://studyquest-real.serveo.net"
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "✅ Tunnel URL: $URL"
+
+      # =============================================
+      # تست تونل از داخل
+      # =============================================
+      - name: Test tunnel from inside
+        run: |
+          echo "=========================================="
+          echo "🌐 Testing tunnel..."
+          echo "=========================================="
+          curl -f https://studyquest-real.serveo.net/ping || exit 1
+          echo "✅ Tunnel is working"
+
+      # =============================================
+      # نگهداری زنده + چک سلامت (۵ ساعت و ۳۰ دقیقه)
+      # =============================================
+      - name: Keep alive & health-check loop
+        run: |
+          URL="https://studyquest-real.serveo.net"
+          echo "=========================================="
+          echo "👁️ Starting keep-alive + health checker..."
+          echo "URL: $URL"
+          echo "Total checks: 66 (5 minutes each = 5h 30m)"
+          echo "=========================================="
+          for i in $(seq 1 66); do
+            sleep 300
+            echo ""
+            echo "=========================================="
+            echo "🔍 Check $i/66 at $(date)"
+            echo "=========================================="
+
+            # چک محلی
+            echo "--- Checking localhost:5000/ping ---"
+            if curl -f -s -o /dev/null http://localhost:5000/ping; then
+              echo "✅ Flask local: OK"
+            else
+              echo "❌ Flask local: DOWN"
+              echo "⚠️ Triggering fallback..."
+              gh workflow run server-b.yml --ref main
+              exit 0
+            fi
+
+            # چک از تونل
+            echo "--- Checking $URL/ping ---"
+            if curl -f -s -o /dev/null "${URL}/ping"; then
+              echo "✅ Tunnel remote: OK"
+            else
+              echo "❌ Tunnel remote: DOWN"
+              echo "⚠️ Triggering fallback..."
+              gh workflow run server-b.yml --ref main
+              exit 0
+            fi
+
+            echo "✅ Server is alive ($i/66)"
+          done
+
+          echo ""
+          echo "=========================================="
+          echo "🔄 Time's up! Triggering Server B..."
+          echo "=========================================="
+          gh workflow run server-b.yml --ref main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # =============================================
+      # ذخیره لاگ‌ها
+      # =============================================
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs
+          path: |
+            flask.log
