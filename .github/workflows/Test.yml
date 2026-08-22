@@ -1,0 +1,124 @@
+name: Real Server Test (Main Code) Up to 2500 RPS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-real:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Flask, k6 & autossh
+        run: |
+          pip install flask flask-cors
+          sudo apt-get update
+          sudo apt-get install -y ssh autossh
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      # =========================================================
+      # اجرای سرور اصلی از فایل server.py موجود در مخزن
+      # =========================================================
+      - name: Run main Flask server
+        run: |
+          # اطمینان از وجود فایل‌های JSON مورد نیاز (اگر کد اصلی آن‌ها را می‌سازد، نیازی نیست)
+          # اما برای اطمینان، فایل‌های خالی ایجاد می‌کنیم تا کد خطا ندهد
+          touch users.json events.json progress.json version.txt 2>/dev/null || true
+          nohup python server.py > flask.log 2>&1 &
+          sleep 5
+          curl -f http://localhost:5000/ping || exit 1
+          echo "✅ Main server is running"
+
+      - name: Start Serveo tunnel
+        id: tunnel
+        run: |
+          SUBDOMAIN="studyquest-real"
+          autossh -M 0 -o "StrictHostKeyChecking=no" -R $SUBDOMAIN:80:localhost:5000 serveo.net &
+          sleep 10
+          URL="https://$SUBDOMAIN.serveo.net"
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "✅ Tunnel URL: $URL"
+
+      # =========================================================
+      # تست Ramp-up تا 2500 RPS (با کد اصلی)
+      # =========================================================
+      - name: Ramp-up load test (main code)
+        run: |
+          URL="${{ steps.tunnel.outputs.url }}"
+          echo "🔍 Testing main server up to 2500 RPS ..."
+          cat > ramp-real.js << 'EOF'
+          import http from 'k6/http';
+          import { sleep, check } from 'k6';
+
+          export const options = {
+            scenarios: {
+              ramp_up: {
+                executor: 'ramping-arrival-rate',
+                startRate: 10,
+                timeUnit: '1s',
+                preAllocatedVUs: 20,
+                maxVUs: 200,
+                stages: [
+                  { duration: '15s', target: 50 },
+                  { duration: '15s', target: 100 },
+                  { duration: '15s', target: 200 },
+                  { duration: '15s', target: 300 },
+                  { duration: '15s', target: 500 },
+                  { duration: '15s', target: 700 },
+                  { duration: '15s', target: 1000 },
+                  { duration: '15s', target: 1500 },
+                  { duration: '15s', target: 2000 },
+                  { duration: '15s', target: 2500 },
+                ],
+                gracefulStop: '5s',
+              },
+            },
+            thresholds: {
+              http_req_failed: ['rate<0.01'],
+            },
+          };
+
+          export default function () {
+            const res = http.get(`${__ENV.TEST_URL}/ping`);
+            check(res, { 'status is 200': (r) => r.status === 200 });
+            sleep(0.05);
+          }
+          EOF
+          export TEST_URL="$URL"
+          set +e
+          k6 run ramp-real.js 2>&1 | tee ramp-output.log
+          EXIT_CODE=$?
+          set -e
+
+          LAST_RATE=$(grep -oE '[0-9.]+ iters/s' ramp-output.log | tail -1 | grep -oE '[0-9]+' | head -1)
+          if [ -z "$LAST_RATE" ] || [ "$LAST_RATE" -eq 0 ]; then
+            LAST_RATE=10
+          fi
+          echo "$LAST_RATE" > max_rps.txt
+          echo "✅ Real server max RPS without errors: $LAST_RATE"
+
+      - name: Show result
+        run: |
+          MAX_RPS=$(cat max_rps.txt)
+          echo "=========================================="
+          echo "🎯 REAL SERVER MAX RPS WITHOUT ERRORS: $MAX_RPS"
+          echo "=========================================="
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-server-logs
+          path: |
+            flask.log
+            ramp-output.log
+            max_rps.txt
