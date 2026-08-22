@@ -1,0 +1,90 @@
+name: Server B
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: server-b
+  cancel-in-progress: true
+
+jobs:
+  # =========================================================
+  # جاب ۱: راه‌اندازی سرور (پیش‌نیاز)
+  # =========================================================
+  setup-server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python & Flask
+        run: |
+          pip install flask flask-cors
+          python server.py &
+          sleep 5
+
+      - name: Start MaxoPerf tunnel (fixed subdomain)
+        run: |
+          npx @maxoperf/tunnel http 5000 --name studyquest --token ${{ secrets.MAXOPERF_TOKEN }} &
+          sleep 10
+
+      - name: Confirm server is live
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -f -s -o /dev/null http://localhost:5000/ping; then
+              echo "✅ Server confirmed"
+              exit 0
+            fi
+            echo "⏳ Waiting for server... ($i/5)"
+            sleep 3
+          done
+          exit 1
+
+  # =========================================================
+  # جاب ۲: اجرای سرور (فقط ۵:۳۰ نگه می‌داره)
+  # =========================================================
+  run-server:
+    needs: setup-server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep alive for 5h 30m
+        run: sleep 19800
+
+      - name: Trigger Server A
+        run: |
+          cd $GITHUB_WORKSPACE
+          gh workflow run server-a.yml --ref main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =========================================================
+  # جاب ۳: نگهبان (هم ۵:۳۰ نگه می‌داره و هم هر ۵ دقیقه چک می‌کنه)
+  # =========================================================
+  watcher:
+    needs: setup-server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep alive + Health check
+        run: |
+          cd $GITHUB_WORKSPACE
+          URL="https://tunnel-studyquest.maxoperf.com"
+          for i in {1..66}; do
+            sleep 300
+            if ! curl -f -s -o /dev/null "${URL}/ping"; then
+              echo "⚠️ Server is down! Triggering fallback..."
+              gh run cancel ${{ github.run_id }}
+              gh workflow run server-a.yml --ref main
+              exit 0
+            fi
+            echo "✅ Server is alive ($i/66)"
+          done
+
+          # بعد از ۶۶ بار (۵:۳۰ ساعت)، ورکفلو بعدی رو صدا بزن
+          echo "🔄 Time's up! Triggering Server A..."
+          gh workflow run server-a.yml --ref main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
