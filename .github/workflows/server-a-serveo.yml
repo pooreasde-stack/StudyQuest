@@ -1,4 +1,4 @@
-name: Server A (Serveo - SSH Key)
+name: Server A (Serveo - Final)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: server-a-serveo-ssh
+  group: server-a-serveo-final
   cancel-in-progress: true
 
 jobs:
@@ -19,36 +19,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # =============================================
-      # ۱. نصب ابزارها
-      # =============================================
       - name: Install Flask & autossh
         run: |
           sudo apt-get update
           sudo apt-get install -y autossh ssh
           pip install flask flask-cors
 
-      # =============================================
-      # ۲. تولید کلید SSH (بدون عبارت عبور)
-      # =============================================
       - name: Generate SSH key
         run: |
           mkdir -p ~/.ssh
           ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -N ""
           echo "✅ SSH key generated"
-          cat ~/.ssh/id_rsa.pub
 
-      # =============================================
-      # ۳. معرفی کلید به Serveo (ذخیره در known_hosts)
-      # =============================================
-      - name: Register SSH key with Serveo
+      - name: Connect once to reserve subdomain and accept host key
         run: |
-          ssh-keyscan -H serveo.net >> ~/.ssh/known_hosts
-          echo "✅ Serveo added to known_hosts"
+          echo "=========================================="
+          echo "🔑 First connection to reserve subdomain..."
+          echo "=========================================="
+          ssh -o StrictHostKeyChecking=no -o "IdentityFile=~/.ssh/id_rsa" -R StudyQuest-17y3-nswfi-sd1:80:localhost:5000 serveo.net -f -N
+          sleep 5
+          echo "✅ Subdomain reserved"
 
-      # =============================================
-      # ۴. اجرای Flask
-      # =============================================
       - name: Run Flask server
         run: |
           nohup python server.py > flask.log 2>&1 &
@@ -56,23 +47,16 @@ jobs:
           curl -f http://localhost:5000/ping || exit 1
           echo "✅ Flask is running"
 
-      # =============================================
-      # ۵. اجرای تونل Serveo با کلید و زیردامنه‌ی ثابت
-      # =============================================
-      - name: Start Serveo tunnel (fixed subdomain with SSH key)
+      - name: Start Serveo tunnel (autossh)
         run: |
           echo "=========================================="
-          echo "🔗 Starting Serveo tunnel with SSH key..."
+          echo "🔗 Starting autossh tunnel..."
           echo "Subdomain: StudyQuest-17y3-nswfi-sd1"
           echo "=========================================="
           nohup autossh -M 0 -o "StrictHostKeyChecking=no" -o "IdentityFile=~/.ssh/id_rsa" -R StudyQuest-17y3-nswfi-sd1:80:localhost:5000 serveo.net > tunnel.log 2>&1 &
           sleep 15
-          echo "📄 Tunnel log:"
           cat tunnel.log
 
-      # =============================================
-      # ۶. تست تونل از داخل
-      # =============================================
       - name: Test tunnel from inside
         run: |
           echo "=========================================="
@@ -82,9 +66,6 @@ jobs:
           curl -f "$URL/ping" || exit 1
           echo "✅ Tunnel is working"
 
-      # =============================================
-      # ۷. نگهداری زنده + چک سلامت (۵:۳۰ ساعت)
-      # =============================================
       - name: Keep alive & health-check loop (5h30m)
         run: |
           URL="https://StudyQuest-17y3-nswfi-sd1.serveo.net"
@@ -92,28 +73,25 @@ jobs:
             sleep 300
             if ! curl -f -s -o /dev/null http://localhost:5000/ping; then
               echo "❌ Flask DOWN → Triggering fallback..."
-              gh workflow run server-b-serveo-ssh.yml --ref main
+              gh workflow run server-b-serveo-final.yml --ref main
               exit 0
             fi
             if ! curl -f -s -o /dev/null "${URL}/ping"; then
               echo "❌ Tunnel DOWN → Triggering fallback..."
-              gh workflow run server-b-serveo-ssh.yml --ref main
+              gh workflow run server-b-serveo-final.yml --ref main
               exit 0
             fi
             echo "✅ Server is alive ($i/66)"
           done
-          gh workflow run server-b-serveo-ssh.yml --ref main
+          gh workflow run server-b-serveo-final.yml --ref main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # =============================================
-      # ۸. ذخیره لاگ‌ها
-      # =============================================
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-serveo-ssh-a
+          name: logs-serveo-final-a
           path: |
             flask.log
             tunnel.log
