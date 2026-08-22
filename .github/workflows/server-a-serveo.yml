@@ -1,4 +1,4 @@
-name: Server A (Serveo - Final)
+name: Server A (StudyQuest Real)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
   actions: write
 
 concurrency:
-  group: server-a-serveo-final
+  group: server-a-real
   cancel-in-progress: true
 
 jobs:
@@ -22,23 +22,8 @@ jobs:
       - name: Install Flask & autossh
         run: |
           sudo apt-get update
-          sudo apt-get install -y autossh ssh
+          sudo apt-get install -y autossh
           pip install flask flask-cors
-
-      - name: Generate SSH key
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -N ""
-          echo "✅ SSH key generated"
-
-      - name: Connect once to reserve subdomain and accept host key
-        run: |
-          echo "=========================================="
-          echo "🔑 First connection to reserve subdomain..."
-          echo "=========================================="
-          ssh -o StrictHostKeyChecking=no -o "IdentityFile=~/.ssh/id_rsa" -R StudyQuest-17y3-nswfi-sd1:80:localhost:5000 serveo.net -f -N
-          sleep 5
-          echo "✅ Subdomain reserved"
 
       - name: Run Flask server
         run: |
@@ -47,14 +32,14 @@ jobs:
           curl -f http://localhost:5000/ping || exit 1
           echo "✅ Flask is running"
 
-      - name: Start Serveo tunnel (autossh)
+      - name: Start Serveo tunnel (studyquest-real)
         run: |
           echo "=========================================="
-          echo "🔗 Starting autossh tunnel..."
-          echo "Subdomain: StudyQuest-17y3-nswfi-sd1"
+          echo "🔗 Starting Serveo tunnel with studyquest-real..."
           echo "=========================================="
-          nohup autossh -M 0 -o "StrictHostKeyChecking=no" -o "IdentityFile=~/.ssh/id_rsa" -R StudyQuest-17y3-nswfi-sd1:80:localhost:5000 serveo.net > tunnel.log 2>&1 &
+          nohup autossh -M 0 -o "StrictHostKeyChecking=no" -o "IdentityFile=~/.ssh/id_rsa" -R studyquest-real:80:localhost:5000 serveo.net > tunnel.log 2>&1 &
           sleep 15
+          echo "📄 Tunnel log:"
           cat tunnel.log
 
       - name: Test tunnel from inside
@@ -62,28 +47,27 @@ jobs:
           echo "=========================================="
           echo "🌐 Testing tunnel..."
           echo "=========================================="
-          URL="https://StudyQuest-17y3-nswfi-sd1.serveo.net"
-          curl -f "$URL/ping" || exit 1
+          curl -f https://studyquest-real.serveo.net/ping || exit 1
           echo "✅ Tunnel is working"
 
       - name: Keep alive & health-check loop (5h30m)
         run: |
-          URL="https://StudyQuest-17y3-nswfi-sd1.serveo.net"
+          URL="https://studyquest-real.serveo.net"
           for i in {1..66}; do
             sleep 300
             if ! curl -f -s -o /dev/null http://localhost:5000/ping; then
               echo "❌ Flask DOWN → Triggering fallback..."
-              gh workflow run server-b-serveo-final.yml --ref main
+              gh workflow run server-b-real.yml --ref main
               exit 0
             fi
             if ! curl -f -s -o /dev/null "${URL}/ping"; then
               echo "❌ Tunnel DOWN → Triggering fallback..."
-              gh workflow run server-b-serveo-final.yml --ref main
+              gh workflow run server-b-real.yml --ref main
               exit 0
             fi
             echo "✅ Server is alive ($i/66)"
           done
-          gh workflow run server-b-serveo-final.yml --ref main
+          gh workflow run server-b-real.yml --ref main
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -91,7 +75,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-serveo-final-a
+          name: logs-real-a
           path: |
             flask.log
             tunnel.log
