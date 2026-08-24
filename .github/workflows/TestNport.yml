@@ -16,6 +16,11 @@ jobs:
         with:
           node-version: 20
 
+      - name: Check npm and npx
+        run: |
+          npm --version
+          npx --version
+
       - name: Install Python & Flask
         uses: actions/setup-python@v5
         with:
@@ -41,13 +46,11 @@ jobs:
           sleep 3
           curl -s http://localhost:5000/ping || (echo "Flask failed" && exit 1)
 
-      - name: Start NPort tunnel
+      - name: Test NPort with timeout
         id: tunnel
         run: |
-          echo "🔗 Starting NPort..."
-          # --yes برای قبول خودکار نصب
-          npx --yes nport 5000 -s test${{ github.run_id }} > tunnel.log 2>&1 &
-          sleep 30
+          echo "🔗 Running NPort with timeout 15 seconds..."
+          timeout 15 npx --yes nport 5000 -s test${{ github.run_id }} > tunnel.log 2>&1
           echo "📄 Full tunnel.log:"
           cat tunnel.log
           URL=$(grep -o 'https://[a-zA-Z0-9-]*\.nport\.link' tunnel.log | head -1)
