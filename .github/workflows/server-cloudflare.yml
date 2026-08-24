@@ -1,0 +1,232 @@
+name: Server Cloudflare (Full Debug)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: server-cloudflare
+  cancel-in-progress: true
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350   # 5h 50m برای اطمینان
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # =============================================
+      # ۱. نصب Flask
+      # =============================================
+      - name: Install Flask
+        run: |
+          echo "=========================================="
+          echo "📦 Installing Flask..."
+          echo "=========================================="
+          pip install flask flask-cors 2>&1 | tee flask-install.log
+          echo ""
+          echo "✅ Flask installed successfully"
+
+      # =============================================
+      # ۲. نصب cloudflared
+      # =============================================
+      - name: Install cloudflared
+        run: |
+          echo "=========================================="
+          echo "📦 Installing cloudflared..."
+          echo "=========================================="
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
+          cloudflared --version
+          echo "✅ cloudflared installed"
+
+      # =============================================
+      # ۳. اجرای Flask
+      # =============================================
+      - name: Run Flask server
+        run: |
+          echo "=========================================="
+          echo "🚀 Starting Flask server..."
+          echo "=========================================="
+          # اگر فایل server.py وجود دارد از آن استفاده کن، در غیر این صورت یک سرور ساده بساز
+          if [ ! -f server.py ]; then
+            cat > server.py << 'EOF'
+          from flask import Flask, jsonify
+          app = Flask(__name__)
+          @app.route('/')
+          def index():
+              return jsonify({"status":"alive"})
+          @app.route('/ping')
+          def ping():
+              return jsonify({"pong":"ok"})
+          if __name__ == '__main__':
+              app.run(host='0.0.0.0', port=5000)
+          EOF
+          fi
+          nohup python server.py > flask.log 2>&1 &
+          FLASK_PID=$!
+          echo "$FLASK_PID" > flask.pid
+          echo "Flask PID: $FLASK_PID"
+          echo ""
+          echo "⏳ Waiting 5 seconds for Flask to start..."
+          sleep 5
+          echo ""
+          echo "📄 Flask log (first 30 lines):"
+          head -30 flask.log
+          echo ""
+          echo "✅ Flask is running in background"
+
+      # =============================================
+      # ۴. تست Flask از localhost
+      # =============================================
+      - name: Test Flask from localhost
+        run: |
+          echo "=========================================="
+          echo "🧪 Testing Flask from localhost..."
+          echo "=========================================="
+          curl -v http://localhost:5000/ping 2>&1 || {
+            echo "❌ Flask not responding!"
+            cat flask.log
+            exit 1
+          }
+          echo "✅ Flask is responding"
+
+      # =============================================
+      # ۵. اجرای تونل Cloudflare (Quick Tunnel)
+      # =============================================
+      - name: Start Cloudflare tunnel
+        id: tunnel
+        run: |
+          echo "=========================================="
+          echo "🔗 Starting Cloudflare tunnel (Quick Tunnel)..."
+          echo "=========================================="
+          # اجرای تونل در پس‌زمینه
+          nohup cloudflared tunnel --url http://localhost:5000 > tunnel.log 2>&1 &
+          TUNNEL_PID=$!
+          echo "$TUNNEL_PID" > tunnel.pid
+          echo "Tunnel PID: $TUNNEL_PID"
+          echo ""
+          echo "⏳ Waiting up to 60 seconds for tunnel URL..."
+          URL=""
+          for i in {1..60}; do
+            sleep 1
+            # استخراج URL از لاگ
+            URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
+            if [ -n "$URL" ]; then
+              break
+            fi
+          done
+          if [ -z "$URL" ]; then
+            echo "❌ Failed to get tunnel URL!"
+            echo "📄 Full tunnel.log:"
+            cat tunnel.log
+            exit 1
+          fi
+          echo "✅ Tunnel URL: $URL"
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          # ذخیره در فایل برای استفاده بعدی
+          echo "$URL" > tunnel_url.txt
+          echo ""
+          echo "📄 Tunnel log (first 30 lines):"
+          head -30 tunnel.log
+
+      # =============================================
+      # ۶. تست تونل از داخل (از طریق اینترنت)
+      # =============================================
+      - name: Test tunnel from inside
+        run: |
+          echo "=========================================="
+          echo "🌐 Testing tunnel from inside..."
+          echo "=========================================="
+          URL=$(cat tunnel_url.txt)
+          echo "Testing URL: $URL/ping"
+          echo ""
+          curl -v "$URL/ping" 2>&1 || {
+            echo "❌ Tunnel is NOT working from inside!"
+            echo "📄 Full tunnel.log:"
+            cat tunnel.log
+            exit 1
+          }
+          echo "✅ Tunnel is working from inside"
+
+      # =============================================
+      # ۷. چاپ URL در خروجی (برای کپی کردن)
+      # =============================================
+      - name: Print tunnel URL
+        run: |
+          echo "=========================================="
+          echo "🔗 YOUR TUNNEL URL (COPY THIS):"
+          echo "=========================================="
+          cat tunnel_url.txt
+          echo ""
+          echo "=========================================="
+
+      # =============================================
+      # ۸. نگهبان + نگهداری زنده (۵ ساعت و ۳۰ دقیقه)
+      # =============================================
+      - name: Keep alive & health-check loop (5h30m)
+        run: |
+          URL=$(cat tunnel_url.txt)
+          echo "=========================================="
+          echo "👁️ Starting keep-alive + health checker..."
+          echo "URL: $URL"
+          echo "Total checks: 66 (5 minutes each = 5h 30m)"
+          echo "=========================================="
+          for i in $(seq 1 66); do
+            sleep 300
+            echo ""
+            echo "=========================================="
+            echo "🔍 Check $i/66 at $(date)"
+            echo "=========================================="
+
+            # چک محلی
+            echo "--- Checking localhost:5000/ping ---"
+            if curl -f -s -o /dev/null http://localhost:5000/ping; then
+              echo "✅ Flask local: OK"
+            else
+              echo "❌ Flask local: DOWN"
+              echo "⚠️ Triggering fallback (optional)..."
+              # می‌توانید یک fallback مثل اجرای workflow دیگر اضافه کنید
+              # gh workflow run server-b.yml --ref main
+              exit 0
+            fi
+
+            # چک از تونل
+            echo "--- Checking $URL/ping ---"
+            if curl -f -s -o /dev/null "${URL}/ping"; then
+              echo "✅ Tunnel remote: OK"
+            else
+              echo "❌ Tunnel remote: DOWN"
+              echo "⚠️ Triggering fallback..."
+              # gh workflow run server-b.yml --ref main
+              exit 0
+            fi
+
+            echo "✅ Server is alive ($i/66)"
+          done
+
+          echo ""
+          echo "=========================================="
+          echo "⏰ Time's up! Workflow will finish."
+          echo "=========================================="
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # =============================================
+      # ۹. ذخیره لاگ‌ها به‌عنوان Artifact
+      # =============================================
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-logs
+          path: |
+            flask-install.log
+            flask.log
+            tunnel.log
+            tunnel_url.txt
