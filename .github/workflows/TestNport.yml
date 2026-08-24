@@ -45,12 +45,14 @@ jobs:
         id: tunnel
         run: |
           echo "🔗 Starting NPort..."
-          npx nport 5000 -s test${{ github.run_id }} > tunnel.log 2>&1 &
-          sleep 15
+          # --yes برای قبول خودکار نصب
+          npx --yes nport 5000 -s test${{ github.run_id }} > tunnel.log 2>&1 &
+          sleep 30
+          echo "📄 Full tunnel.log:"
+          cat tunnel.log
           URL=$(grep -o 'https://[a-zA-Z0-9-]*\.nport\.link' tunnel.log | head -1)
           if [ -z "$URL" ]; then
             echo "❌ No URL found!"
-            cat tunnel.log
             exit 1
           fi
           echo "✅ URL: $URL"
