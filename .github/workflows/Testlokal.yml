@@ -85,27 +85,27 @@ jobs:
           MAX_RPS=0
           RESULTS=""
 
+          # ساخت فایل script.js با printf (بدون heredoc)
+          printf '%s\n' \
+            'import http from "k6/http";' \
+            'import { check } from "k6";' \
+            '' \
+            'export let options = {' \
+            '  vus: __ENV.RPS ? parseInt(__ENV.RPS) : 1,' \
+            '  duration: "10s",' \
+            '};' \
+            '' \
+            'export default function () {' \
+            '  let res = http.get(__ENV.TARGET_URL);' \
+            '  check(res, {' \
+            '    "status is 200": (r) => r.status === 200,' \
+            '  });' \
+            '}' > script.js
+
           for RPS in $(seq 2 2 50); do
             echo "=========================================="
             echo "📊 Testing at $RPS RPS..."
             echo "=========================================="
-
-            cat > script.js << 'EOF'
-            import http from 'k6/http';
-            import { check } from 'k6';
-
-            export let options = {
-              vus: __ENV.RPS ? parseInt(__ENV.RPS) : 1,
-              duration: '10s',
-            };
-
-            export default function () {
-              let res = http.get(__ENV.TARGET_URL);
-              check(res, {
-                'status is 200': (r) => r.status === 200,
-              });
-            }
-            EOF
 
             k6 run -e TARGET_URL="$URL" -e RPS=$RPS script.js > k6_output_${RPS}.log 2>&1
             cat k6_output_${RPS}.log
