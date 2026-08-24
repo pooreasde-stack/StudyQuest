@@ -6,7 +6,7 @@ on:
 jobs:
   load-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 360
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -85,7 +85,6 @@ jobs:
           MAX_RPS=0
           RESULTS=""
 
-          # ساخت فایل script.js با printf (بدون heredoc)
           printf '%s\n' \
             'import http from "k6/http";' \
             'import { check } from "k6";' \
@@ -96,7 +95,11 @@ jobs:
             '};' \
             '' \
             'export default function () {' \
-            '  let res = http.get(__ENV.TARGET_URL);' \
+            '  let res = http.get(__ENV.TARGET_URL, {' \
+            '    headers: {' \
+            '      "bypass-tunnel-reminder": "any-value",' \
+            '    },' \
+            '  });' \
             '  check(res, {' \
             '    "status is 200": (r) => r.status === 200,' \
             '  });' \
@@ -110,7 +113,7 @@ jobs:
             k6 run -e TARGET_URL="$URL" -e RPS=$RPS script.js > k6_output_${RPS}.log 2>&1
             cat k6_output_${RPS}.log
 
-            if grep -q "checks.........................: 100.00%" k6_output_${RPS}.log; then
+            if grep -q "http_req_failed................: 0.00%" k6_output_${RPS}.log; then
               MAX_RPS=$RPS
               echo "✅ $RPS RPS: PASSED"
               RESULTS="${RESULTS}\n✅ $RPS RPS: PASSED"
@@ -152,9 +155,12 @@ jobs:
             max_rps.txt
             k6_output_*.log
 
-      - name: Keep tunnel alive for 10 minutes (so you can test manually)
+      - name: Keep tunnel alive for 5.5 hours (330 minutes)
         if: steps.tunnel.outputs.url != ''
         run: |
-          echo "⏳ Tunnel alive for 10 minutes..."
-          echo "Test: $(cat url.txt)/ping"
-          sleep 600
+          echo "=========================================="
+          echo "⏳ Keeping tunnel alive for 5.5 hours (330 minutes)"
+          echo "🌐 URL: $(cat url.txt)"
+          echo "📋 Test: $(cat url.txt)/ping"
+          echo "=========================================="
+          sleep 19800
