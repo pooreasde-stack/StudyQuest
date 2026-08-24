@@ -1,0 +1,82 @@
+name: Test NPort Tunnel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Python & Flask
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: pip install flask
+
+      - name: Create Flask server
+        run: |
+          cat > server.py << 'EOF'
+          from flask import Flask, jsonify
+          app = Flask(__name__)
+          @app.route('/')
+          @app.route('/ping')
+          def ping():
+              return jsonify({"pong": "ok"})
+          if __name__ == '__main__':
+              app.run(host='0.0.0.0', port=5000)
+          EOF
+
+      - name: Start Flask
+        run: |
+          nohup python server.py > flask.log 2>&1 &
+          sleep 3
+          curl -s http://localhost:5000/ping || (echo "Flask failed" && exit 1)
+
+      - name: Start NPort tunnel
+        id: tunnel
+        run: |
+          echo "🔗 Starting NPort..."
+          npx nport 5000 -s test${{ github.run_id }} > tunnel.log 2>&1 &
+          sleep 15
+          URL=$(grep -o 'https://[a-zA-Z0-9-]*\.nport\.link' tunnel.log | head -1)
+          if [ -z "$URL" ]; then
+            echo "❌ No URL found!"
+            cat tunnel.log
+            exit 1
+          fi
+          echo "✅ URL: $URL"
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "$URL" > url.txt
+
+      - name: Print URL
+        run: |
+          echo "=========================================="
+          echo "🌐 NPort URL: $(cat url.txt)"
+          echo "📋 Test: $(cat url.txt)/ping"
+          echo "=========================================="
+
+      - name: Keep alive for 10 minutes
+        if: steps.tunnel.outputs.url != ''
+        run: |
+          echo "⏳ Tunnel alive for 10 minutes..."
+          echo "Test: $(cat url.txt)/ping"
+          sleep 600
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nport-logs
+          path: |
+            flask.log
+            tunnel.log
+            url.txt
