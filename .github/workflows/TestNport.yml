@@ -16,11 +16,6 @@ jobs:
         with:
           node-version: 20
 
-      - name: Check npm and npx
-        run: |
-          npm --version
-          npx --version
-
       - name: Install Python & Flask
         uses: actions/setup-python@v5
         with:
@@ -46,16 +41,26 @@ jobs:
           sleep 3
           curl -s http://localhost:5000/ping || (echo "Flask failed" && exit 1)
 
-      - name: Test NPort with timeout
+      - name: Start NPort tunnel (wait 120s, check every 5s)
         id: tunnel
         run: |
-          echo "🔗 Running NPort with timeout 15 seconds..."
-          timeout 15 npx --yes nport 5000 -s test${{ github.run_id }} > tunnel.log 2>&1
+          echo "🔗 Starting NPort..."
+          npx --yes nport 5000 -s test${{ github.run_id }} > tunnel.log 2>&1 &
+          echo "⏳ Waiting for URL (check every 5s, up to 120s)..."
+          URL=""
+          for i in {1..24}; do
+            sleep 5
+            echo "   Attempt $i/24"
+            URL=$(grep -o 'https://[a-zA-Z0-9-]*\.nport\.link' tunnel.log | head -1)
+            if [ -n "$URL" ]; then
+              echo "✅ URL found at attempt $i"
+              break
+            fi
+          done
           echo "📄 Full tunnel.log:"
           cat tunnel.log
-          URL=$(grep -o 'https://[a-zA-Z0-9-]*\.nport\.link' tunnel.log | head -1)
           if [ -z "$URL" ]; then
-            echo "❌ No URL found!"
+            echo "❌ No URL found after 120 seconds!"
             exit 1
           fi
           echo "✅ URL: $URL"
