@@ -1,26 +1,26 @@
 {
   "timezoneOffsetHours": 3.5,
-  "sessionLabel": "جلسه‌ی مطالعه‌ی عصرگاهی",
+  "sessionLabel": "جلسه‌ی مطالعه‌ی صبحگاهی",
   "phases": {
     "before": {
-      "start": "15:33",
-      "end": "15:34"
+      "start": "11:39",
+      "end": "11:40"
     },
     "checkin": {
-      "start": "15:34",
-      "end": "15:36"
+      "start": "11:40",
+      "end": "11:42"
     },
     "study": {
-      "start": "15:36",
-      "end": "15:37"
+      "start": "11:42",
+      "end": "11:43"
     },
     "proof": {
-      "start": "15:37",
-      "end": "15:39"
+      "start": "11:43",
+      "end": "11:45"
     },
     "done": {
-      "start": "15:39",
-      "end": "15:40"
+      "start": "11:45",
+      "end": "11:46"
     }
   }
 }
