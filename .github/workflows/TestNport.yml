@@ -1,4 +1,4 @@
-name: Test NPort Tunnel
+name: Test LocalTunnel
 
 on:
   workflow_dispatch:
@@ -41,17 +41,17 @@ jobs:
           sleep 3
           curl -s http://localhost:5000/ping || (echo "Flask failed" && exit 1)
 
-      - name: Start NPort tunnel (wait 120s, check every 5s)
+      - name: Start LocalTunnel (wait 120s, check every 5s)
         id: tunnel
         run: |
-          echo "🔗 Starting NPort..."
-          npx --yes nport 5000 -s test${{ github.run_id }} > tunnel.log 2>&1 &
+          echo "🔗 Starting LocalTunnel..."
+          npx --yes localtunnel --port 5000 > tunnel.log 2>&1 &
           echo "⏳ Waiting for URL (check every 5s, up to 120s)..."
           URL=""
           for i in {1..24}; do
             sleep 5
             echo "   Attempt $i/24"
-            URL=$(grep -o 'https://[a-zA-Z0-9-]*\.nport\.link' tunnel.log | head -1)
+            URL=$(grep -o 'https://[a-zA-Z0-9.-]*\.loca\.lt' tunnel.log | head -1)
             if [ -n "$URL" ]; then
               echo "✅ URL found at attempt $i"
               break
@@ -70,7 +70,7 @@ jobs:
       - name: Print URL
         run: |
           echo "=========================================="
-          echo "🌐 NPort URL: $(cat url.txt)"
+          echo "🌐 LocalTunnel URL: $(cat url.txt)"
           echo "📋 Test: $(cat url.txt)/ping"
           echo "=========================================="
 
@@ -85,7 +85,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: nport-logs
+          name: localtunnel-logs
           path: |
             flask.log
             tunnel.log
