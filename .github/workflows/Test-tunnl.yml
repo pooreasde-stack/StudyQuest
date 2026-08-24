@@ -20,7 +20,12 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq k6 curl
+          # Install prerequisite tools and k6 from official repo
+          sudo apt-get install -y software-properties-common jq curl bc
+          curl -s https://dl.k6.io/key.gpg | sudo apt-key add -
+          sudo add-apt-repository "deb https://dl.k6.io/deb stable main"
+          sudo apt-get update
+          sudo apt-get install -y k6
 
       - name: Install Node.js and tunnel tools
         uses: actions/setup-node@v4
