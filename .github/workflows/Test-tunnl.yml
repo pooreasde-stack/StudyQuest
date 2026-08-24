@@ -10,8 +10,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [serveo, localtunnel, ngrok, cloudflare, maxoperf]
+        # ngrok را در صورت نداشتن توکن حذف کنید یا شرط بگذارید
+        service: [serveo, localtunnel, cloudflare, maxoperf]  # ngrok را موقتاً حذف کردیم
         run: [1, 2, 3]
+    env:
+      # اگر توکن ngrok دارید، آن را در سکرت بگذارید و این خط را فعال کنید
+      # NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
 
     steps:
       - name: Checkout repository
@@ -20,8 +24,8 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          # Install prerequisite tools and k6 from official repo
-          sudo apt-get install -y software-properties-common jq curl bc
+          sudo apt-get install -y software-properties-common jq curl bc openssh-client
+          # نصب k6 از مخزن رسمی
           curl -s https://dl.k6.io/key.gpg | sudo apt-key add -
           sudo add-apt-repository "deb https://dl.k6.io/deb stable main"
           sudo apt-get update
@@ -38,6 +42,7 @@ jobs:
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
           sudo mv cloudflared /usr/local/bin/
+          cloudflared --version
 
       - name: Install Python and Flask
         uses: actions/setup-python@v5
@@ -57,24 +62,27 @@ jobs:
               app.run(host='0.0.0.0', port=5000)
           EOF
           nohup python app.py > flask.log 2>&1 &
-          # Wait for Flask to be ready
-          for i in {1..10}; do
+          # منتظر آماده شدن Flask
+          for i in {1..15}; do
             if curl -s http://localhost:5000 > /dev/null; then
               echo "Flask is ready"
               break
             fi
+            echo "Waiting for Flask... (attempt $i)"
             sleep 2
           done
+          curl -v http://localhost:5000 || echo "Flask not responding"
 
       - name: Start tunnel and extract URL
         id: tunnel
         run: |
           set -e
+          echo "Starting tunnel for ${{ matrix.service }}"
           case "${{ matrix.service }}" in
             serveo)
-              ssh -o StrictHostKeyChecking=no -R 80:localhost:5000 serveo.net > tunnel.log 2>&1 &
+              ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -R 80:localhost:5000 serveo.net > tunnel.log 2>&1 &
               TUNNEL_PID=$!
-              for i in {1..30}; do
+              for i in {1..45}; do
                 URL=$(grep -o 'https://[a-zA-Z0-9]*\.serveo\.net' tunnel.log | head -1)
                 if [ -n "$URL" ]; then break; fi
                 sleep 2
@@ -83,27 +91,16 @@ jobs:
             localtunnel)
               npx localtunnel --port 5000 > tunnel.log 2>&1 &
               TUNNEL_PID=$!
-              for i in {1..30}; do
+              for i in {1..45}; do
                 URL=$(grep -o 'https://[a-zA-Z0-9.-]*\.loca\.lt' tunnel.log | head -1)
                 if [ -n "$URL" ]; then break; fi
-                sleep 2
-              done
-              ;;
-            ngrok)
-              npx ngrok http 5000 --log=stdout > tunnel.log 2>&1 &
-              TUNNEL_PID=$!
-              for i in {1..30}; do
-                if curl -s http://localhost:4040/api/tunnels > /dev/null; then
-                  URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-                  if [ -n "$URL" ] && [ "$URL" != "null" ]; then break; fi
-                fi
                 sleep 2
               done
               ;;
             cloudflare)
               cloudflared tunnel --url http://localhost:5000 > tunnel.log 2>&1 &
               TUNNEL_PID=$!
-              for i in {1..30}; do
+              for i in {1..45}; do
                 URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
                 if [ -n "$URL" ]; then break; fi
                 sleep 2
@@ -112,20 +109,26 @@ jobs:
             maxoperf)
               npx @maxoperf/tunnel http 5000 > tunnel.log 2>&1 &
               TUNNEL_PID=$!
-              for i in {1..30}; do
+              for i in {1..45}; do
                 URL=$(grep -o 'https://[a-zA-Z0-9.-]*\.maxoperf\.com' tunnel.log | head -1)
                 if [ -n "$URL" ]; then break; fi
                 sleep 2
               done
               ;;
           esac
+
+          # اگر URL پیدا نشد، لاگ را چاپ کن
           if [ -z "$URL" ]; then
-            echo "Failed to get tunnel URL"
+            echo "❌ Failed to get tunnel URL. Here is the tunnel log:"
+            cat tunnel.log
             echo "url=" >> $GITHUB_OUTPUT
             exit 1
           fi
+
+          echo "✅ Tunnel URL: $URL"
           echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "Tunnel URL: $URL"
+          # ذخیره PID برای نگهداری بعدی
+          echo "pid=$TUNNEL_PID" >> $GITHUB_OUTPUT
 
       - name: Run k6 load test
         id: k6
@@ -174,7 +177,6 @@ jobs:
           echo "max_rps=$MAX_RPS" >> $GITHUB_OUTPUT
           echo "p95=$P95" >> $GITHUB_OUTPUT
 
-          # Save result JSON
           cat > result_${{ matrix.service }}_${{ matrix.run }}.json << EOF
           {
             "service": "${{ matrix.service }}",
@@ -227,10 +229,8 @@ jobs:
       - name: Generate comparison report
         run: |
           set -e
-          # Collect all result files
           find artifacts -name "result_*.json" > result_files.txt
 
-          # Use jq to aggregate per service
           declare -A sums counts maxs urls p95s
           declare -A alive_urls
 
@@ -246,7 +246,6 @@ jobs:
               sums[$service]=$(( ${sums[$service]:-0} + max_rps ))
               counts[$service]=$(( ${counts[$service]:-0} + 1 ))
               p95s[$service]="${p95s[$service]:-} $p95"
-              # keep the best run for this service (max_rps)
               if [ ${maxs[$service]:-0} -lt $max_rps ]; then
                 maxs[$service]=$max_rps
                 urls[$service]=$url
@@ -257,7 +256,6 @@ jobs:
             fi
           done < result_files.txt
 
-          # Prepare markdown
           echo "# 🚀 Tunnel Performance Comparison" > report.md
           echo "" >> report.md
           echo "| Service | Best RPS (single run) | Avg RPS (3 runs) | p95 (ms) | Sample URL |" >> report.md
@@ -265,7 +263,7 @@ jobs:
 
           best_service=""
           best_avg=0
-          for service in serveo localtunnel ngrok cloudflare maxoperf; do
+          for service in serveo localtunnel cloudflare maxoperf; do
             count=${counts[$service]:-0}
             sum=${sums[$service]:-0}
             avg=0
@@ -274,7 +272,6 @@ jobs:
             fi
             best_run=${maxs[$service]:-0}
             url=${urls[$service]:-"-"}
-            # p95: average of all successful runs
             p95_list="${p95s[$service]:-}"
             p95_avg=0
             if [ -n "$p95_list" ]; then
@@ -290,7 +287,6 @@ jobs:
             fi
             if [ $count -gt 0 ]; then
               echo "| $service | $best_run | $avg | $p95_avg | $url |" >> report.md
-              # Determine best by average RPS
               if (( $(echo "$avg > $best_avg" | bc -l) )); then
                 best_avg=$avg
                 best_service=$service
@@ -319,8 +315,6 @@ jobs:
           echo "REPORT<<EOF" >> $GITHUB_ENV
           cat report.md >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
-
-          # Also create a text file for artifacts
           cp report.md summary_report.md
 
       - name: Upload summary report
