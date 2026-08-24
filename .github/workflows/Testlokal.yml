@@ -1,0 +1,160 @@
+name: LocalTunnel Load Test with k6
+
+on:
+  workflow_dispatch:
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Python & Flask
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: pip install flask
+
+      - name: Install k6
+        run: |
+          curl -s https://dl.k6.io/key.gpg | sudo apt-key add -
+          sudo add-apt-repository "deb https://dl.k6.io/deb stable main"
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Create Flask server
+        run: |
+          cat > server.py << 'EOF'
+          from flask import Flask, jsonify
+          app = Flask(__name__)
+          @app.route('/')
+          @app.route('/ping')
+          def ping():
+              return jsonify({"pong": "ok"})
+          if __name__ == '__main__':
+              app.run(host='0.0.0.0', port=5000)
+          EOF
+
+      - name: Start Flask
+        run: |
+          nohup python server.py > flask.log 2>&1 &
+          sleep 3
+          curl -s http://localhost:5000/ping || (echo "Flask failed" && exit 1)
+
+      - name: Start LocalTunnel
+        id: tunnel
+        run: |
+          echo "🔗 Starting LocalTunnel..."
+          npx --yes localtunnel --port 5000 > tunnel.log 2>&1 &
+          echo "⏳ Waiting for URL (check every 5s, up to 120s)..."
+          URL=""
+          for i in {1..24}; do
+            sleep 5
+            URL=$(grep -o 'https://[a-zA-Z0-9.-]*\.loca\.lt' tunnel.log | head -1)
+            if [ -n "$URL" ]; then
+              break
+            fi
+          done
+          if [ -z "$URL" ]; then
+            echo "❌ No URL found!"
+            cat tunnel.log
+            exit 1
+          fi
+          echo "✅ URL: $URL"
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "$URL" > url.txt
+
+      - name: k6 load test (2 to 50 RPS, step 2)
+        id: k6
+        run: |
+          URL=$(cat url.txt)
+          echo "🌐 Testing URL: $URL"
+          echo ""
+          echo "=========================================="
+          echo "🚀 Starting load test from 2 to 50 RPS"
+          echo "=========================================="
+          echo ""
+
+          MAX_RPS=0
+          RESULTS=""
+
+          for RPS in $(seq 2 2 50); do
+            echo "=========================================="
+            echo "📊 Testing at $RPS RPS..."
+            echo "=========================================="
+
+            cat > script.js << 'EOF'
+            import http from 'k6/http';
+            import { check } from 'k6';
+
+            export let options = {
+              vus: __ENV.RPS ? parseInt(__ENV.RPS) : 1,
+              duration: '10s',
+            };
+
+            export default function () {
+              let res = http.get(__ENV.TARGET_URL);
+              check(res, {
+                'status is 200': (r) => r.status === 200,
+              });
+            }
+            EOF
+
+            k6 run -e TARGET_URL="$URL" -e RPS=$RPS script.js > k6_output_${RPS}.log 2>&1
+            cat k6_output_${RPS}.log
+
+            if grep -q "checks.........................: 100.00%" k6_output_${RPS}.log; then
+              MAX_RPS=$RPS
+              echo "✅ $RPS RPS: PASSED"
+              RESULTS="${RESULTS}\n✅ $RPS RPS: PASSED"
+            else
+              echo "❌ $RPS RPS: FAILED (stopping here)"
+              RESULTS="${RESULTS}\n❌ $RPS RPS: FAILED (stopped)"
+              break
+            fi
+            echo ""
+          done
+
+          echo "=========================================="
+          echo "🏆 FINAL RESULT"
+          echo "=========================================="
+          echo "Maximum RPS without errors: $MAX_RPS"
+          echo ""
+          echo "📋 Full results:"
+          echo -e "$RESULTS"
+          echo ""
+          echo "max_rps=$MAX_RPS" >> $GITHUB_OUTPUT
+          echo "$MAX_RPS" > max_rps.txt
+
+      - name: Print final result
+        run: |
+          echo "=========================================="
+          echo "✅ BEST RESULT: $(cat max_rps.txt) RPS without errors"
+          echo "🌐 Tunnel URL: $(cat url.txt)"
+          echo "=========================================="
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-logs
+          path: |
+            flask.log
+            tunnel.log
+            url.txt
+            max_rps.txt
+            k6_output_*.log
+
+      - name: Keep tunnel alive for 10 minutes (so you can test manually)
+        if: steps.tunnel.outputs.url != ''
+        run: |
+          echo "⏳ Tunnel alive for 10 minutes..."
+          echo "Test: $(cat url.txt)/ping"
+          sleep 600
