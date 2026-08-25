@@ -28,9 +28,10 @@
 import hashlib
 import json
 import os
+import uuid
 from datetime import datetime, timedelta, time as dtime
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, send_from_directory
 
 challenges_bp = Blueprint("challenges", __name__)
 
@@ -42,6 +43,8 @@ SCHEDULE_FILE = os.path.join(BASE_DIR, "session_schedule.json")
 PROGRESS_FILE = os.path.join(BASE_DIR, "progress.json")
 USERS_FILE = os.path.join(BASE_DIR, "users.json")
 PROOFS_DIR = os.path.join(BASE_DIR, "challenge_proofs")
+CHAT_IMAGES_DIR = os.path.join(BASE_DIR, "challenge_chat_images")
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 
 # --- ثابت‌های قابل‌تنظیم (نگاه کن به توضیح بالای فایل) -----------------
 FULL_DAY_MINUTES = 30
@@ -692,6 +695,76 @@ def challenges_proof():
         _write_json_unlocked(LIVE_SESSION_FILE, session)
 
     return _success(message="مدرک با موفقیت دریافت شد")
+
+
+@challenges_bp.route("/api/challenges/chat-image", methods=["POST"])
+def challenges_chat_image():
+    """پیامِ چتِ عکس‌دار (مجزا از «عکس مدرک»/proof). قبلاً این مسیر اصلاً
+    روی سرور تعریف نشده بود، برای همین کلاینت (ChallengeManager.sendChatImage)
+    همیشه خطای شبکه می‌گرفت. پاسخ دقیقاً هم‌شکلِ endpoint چتِ متنی است:
+    {"status","data":{...ChatMessage به‌همراه فیلدِ "imageUrl"}}."""
+    user_id = request.form.get("userId")
+    if not user_id:
+        return _error("فیلد userId الزامی است", 400)
+
+    image = request.files.get("image")
+    if not image or not image.filename:
+        return _error("فیلد image الزامی است", 400)
+
+    today_str = _today_str()
+    now_local = _now_local()
+
+    # مهم: مثل proof، display باید همین‌جا و پیش از گرفتن _file_lock
+    # محاسبه شود (چون _user_display خودش از طریق _read_json دوباره
+    # همین قفل را می‌گیرد). حالا که قفل از نوع RLock است دیگر دِدلاک
+    # نمی‌شود، ولی همین ترتیب را برای خوانایی و هماهنگی با بقیه‌ی
+    # اندپوینت‌ها نگه می‌داریم.
+    display = _user_display(user_id)
+
+    os.makedirs(CHAT_IMAGES_DIR, exist_ok=True)
+    ext = os.path.splitext(image.filename)[1].lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        ext = ".jpg"
+    safe_name = "{}_{}_{}{}".format(today_str, user_id, uuid.uuid4().hex[:8], ext)
+    image.save(os.path.join(CHAT_IMAGES_DIR, safe_name))
+
+    # آدرس کامل (با دامنه/تونل فعلی) تا کلاینت بتواند مستقیماً عکس را
+    # از روی همین فیلد imageUrl لود کند.
+    image_url = request.host_url.rstrip("/") + "/api/challenges/chat-image-file/" + safe_name
+
+    message = {
+        "userId": display["userId"],
+        "name": display["name"],
+        "initials": display["initials"],
+        "colorKey": display["colorKey"],
+        "text": "",
+        "time": now_local.strftime("%H:%M"),
+        "proof": False,
+        "imageUrl": image_url,
+    }
+
+    with _file_lock:
+        schedule = _read_json_locked(SCHEDULE_FILE, _default_schedule())
+        session_key = _session_key(schedule, today_str)
+        session = _read_json_locked(LIVE_SESSION_FILE, _default_live_session(session_key, today_str))
+        if session.get("sessionKey") != session_key:
+            session = _default_live_session(session_key, today_str)
+
+        chat = session.setdefault("chat", [])
+        chat.append(message)
+        # فقط ۲۰۰ پیام آخر امروز نگه داشته می‌شود (هم‌راستا با چتِ متنی)
+        session["chat"] = chat[-200:]
+
+        _write_json_unlocked(LIVE_SESSION_FILE, session)
+
+    return _success(data=message, message="عکس ارسال شد")
+
+
+@challenges_bp.route("/api/challenges/chat-image-file/<path:filename>", methods=["GET"])
+def challenges_chat_image_file(filename):
+    """سرو کردنِ فایل‌های عکسِ چت که در challenges_chat_image ذخیره شدند،
+    تا imageUrl برگشتی واقعاً قابل بارگذاری باشد."""
+    return send_from_directory(CHAT_IMAGES_DIR, filename)
 
 
 # ================================================================
