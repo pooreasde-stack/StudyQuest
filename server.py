@@ -34,7 +34,24 @@ LEADERBOARD_FILE_TEMPLATE = os.path.join(BASE_DIR, "leaderboard_{event_id}.json"
 VERSION_FILE = os.path.join(BASE_DIR, "version.txt")
 
 app = Flask(__name__)
-_file_lock = threading.Lock()
+# نکته‌ی مهم (فیکس ۵۰۴ روی state/checkin/chat):
+# قبلاً اینجا threading.Lock() بود که "reentrant" نیست — یعنی اگر یک
+# تابع که از قبل قفل را گرفته، دوباره (حتی غیرمستقیم، از طریق تابع
+# دیگری مثل _user_display که خودش _read_json و در نتیجه خودِ همین قفل
+# را صدا می‌زند) بخواهد همان قفل را بگیرد، همان‌جا برای همیشه گیر
+# می‌کند. چون Flask با threaded=True هر ریکوئست را روی نخ جدا اجرا
+# می‌کند، آن یک نخِ گیرکرده هیچ‌وقت آزاد نمی‌شود و بقیه‌ی ریکوئست‌هایی که
+# به همین قفل نیاز دارند (state/checkin/chat/proof) تا ابد منتظر
+# می‌مانند تا این‌که تونل بعد از مدتی 504 برمی‌گرداند — /ping و
+# /api/version چون اصلاً به این قفل نیاز ندارند سالم می‌مانند، دقیقاً
+# همان علامتی که مشاهده شد.
+# با RLock همان کد قبلی (با همان syntax با with) کار می‌کند، ولی اگر
+# یک نخ دوباره (حتی چند بار) همان قفل را بخواهد بگیرد، بلافاصله
+# اجازه می‌گیرد (چون شمارنده‌ی داخلی RLock تشخیص می‌دهد همان نخ است) و
+# فقط وقتی واقعاً برای همه آزاد می‌شود که تمام لایه‌های with تمام شوند.
+# این یعنی هر جای کد (الان یا در آینده) که به‌اشتباه قفل را دوباره از
+# همان نخ بگیرد، دیگر دِدلاک نمی‌شود.
+_file_lock = threading.RLock()
 SERVER_START_TIME = datetime.utcnow()
 
 print("✅ Flask app created")
@@ -312,6 +329,8 @@ def root():
             "POST /api/challenges/checkin",
             "POST /api/challenges/chat",
             "POST /api/challenges/proof",
+            "POST /api/challenges/chat-image",
+            "GET  /api/challenges/chat-image-file/<filename>",
         ])
     return jsonify({
         "service": "StudyQuest Server",
