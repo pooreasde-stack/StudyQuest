@@ -1,0 +1,328 @@
+name: Server Cloudflare A (Auto Push to GAS)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: server-cloudflare-a
+  cancel-in-progress: true
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350  # ۵ ساعت و ۵۰ دقیقه
+    steps:
+      # =============================================
+      # مرحله ۱: دریافت کد
+      # =============================================
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # =============================================
+      # مرحله ۲: نصب Flask
+      # =============================================
+      - name: Install Flask
+        run: |
+          echo "=========================================="
+          echo "📦 Installing Flask..."
+          echo "=========================================="
+          pip install flask flask-cors 2>&1 | tee flask-install.log
+          echo ""
+          echo "✅ Flask installed successfully"
+
+      # =============================================
+      # مرحله ۳: ایجاد فایل server.py (اگر وجود نداشته باشد)
+      # =============================================
+      - name: Create server.py
+        run: |
+          if [ ! -f server.py ]; then
+            cat > server.py << 'EOF'
+          from flask import Flask, jsonify
+          from flask_cors import CORS
+
+          app = Flask(__name__)
+          CORS(app)
+
+          @app.route('/')
+          def index():
+              return jsonify({"status": "alive"})
+
+          @app.route('/ping')
+          def ping():
+              return jsonify({"pong": "ok"})
+
+          @app.route('/health')
+          def health():
+              return jsonify({"status": "healthy"})
+
+          if __name__ == '__main__':
+              app.run(host='0.0.0.0', port=5000, debug=False)
+          EOF
+            echo "✅ server.py created"
+          else
+            echo "✅ server.py already exists"
+          fi
+
+      # =============================================
+      # مرحله ۴: اجرای Flask
+      # =============================================
+      - name: Run Flask server
+        run: |
+          echo "=========================================="
+          echo "🚀 Starting Flask server..."
+          echo "=========================================="
+          nohup python server.py > flask.log 2>&1 &
+          FLASK_PID=$!
+          echo "$FLASK_PID" > flask.pid
+          echo "Flask PID: $FLASK_PID"
+          echo ""
+          echo "⏳ Waiting 5 seconds for Flask to start..."
+          sleep 5
+          echo ""
+          echo "📄 Flask log (first 20 lines):"
+          head -20 flask.log
+          echo ""
+          echo "✅ Flask is running in background"
+
+      # =============================================
+      # مرحله ۵: تست Flask از localhost
+      # =============================================
+      - name: Test Flask locally
+        run: |
+          echo "=========================================="
+          echo "🧪 Testing Flask from localhost..."
+          echo "=========================================="
+          echo ""
+          echo "--- Test 1: curl http://localhost:5000/ping ---"
+          curl -v http://localhost:5000/ping 2>&1 || {
+            echo ""
+            echo "❌ Flask is NOT responding on localhost:5000"
+            echo "📄 Full flask.log:"
+            cat flask.log
+            exit 1
+          }
+          echo ""
+          echo "✅ Flask is responding on localhost:5000"
+
+      # =============================================
+      # مرحله ۶: نصب cloudflared
+      # =============================================
+      - name: Install cloudflared
+        run: |
+          echo "=========================================="
+          echo "📦 Installing cloudflared..."
+          echo "=========================================="
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
+          echo ""
+          echo "🔍 Verifying installation..."
+          if command -v cloudflared &> /dev/null; then
+            echo "✅ cloudflared installed at $(which cloudflared)"
+          else
+            echo "⚠️  Not in PATH, using full path: /usr/local/bin/cloudflared"
+          fi
+          /usr/local/bin/cloudflared --version
+          echo ""
+          echo "✅ cloudflared is ready"
+
+      # =============================================
+      # مرحله ۷: راه‌اندازی تونل Cloudflare (Quick Tunnel)
+      # =============================================
+      - name: Start Cloudflare tunnel
+        id: tunnel
+        run: |
+          echo "=========================================="
+          echo "🔗 Starting Cloudflare tunnel (Quick Tunnel)..."
+          echo "=========================================="
+          nohup /usr/local/bin/cloudflared tunnel --url http://localhost:5000 > tunnel.log 2>&1 &
+          TUNNEL_PID=$!
+          echo "$TUNNEL_PID" > tunnel.pid
+          echo "Tunnel PID: $TUNNEL_PID"
+          echo ""
+          echo "⏳ Waiting up to 60 seconds for tunnel URL..."
+          URL=""
+          for i in {1..60}; do
+            sleep 1
+            URL=$(grep -o 'https://[a-zA-Z0-9-]*\.trycloudflare\.com' tunnel.log | head -1)
+            if [ -n "$URL" ]; then
+              break
+            fi
+          done
+          if [ -z "$URL" ]; then
+            echo "❌ Failed to get tunnel URL after 60 seconds!"
+            echo ""
+            echo "📄 Full tunnel.log:"
+            cat tunnel.log
+            exit 1
+          fi
+          echo ""
+          echo "✅ Tunnel URL found: $URL"
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "$URL" > tunnel_url.txt
+
+      # =============================================
+      # مرحله ۸: تست تونل از داخل (با ۵ بار تلاش و فاصله ۵ ثانیه)
+      # =============================================
+      - name: Test tunnel with retry
+        run: |
+          echo "=========================================="
+          echo "🌐 Testing tunnel with retry (5 attempts)..."
+          echo "=========================================="
+          URL=$(cat tunnel_url.txt)
+          echo "Target URL: $URL/ping"
+          echo ""
+          for attempt in $(seq 1 5); do
+            echo "--- Attempt $attempt/5 ---"
+            if curl -f -s -o /dev/null "${URL}/ping" 2>&1; then
+              echo "✅ Tunnel is reachable (attempt $attempt)"
+              echo ""
+              echo "🎉 Tunnel is working!"
+              exit 0
+            fi
+            echo "❌ Attempt $attempt failed, waiting 5 seconds..."
+            sleep 5
+          done
+          echo ""
+          echo "❌ All 5 attempts failed!"
+          echo ""
+          echo "📄 Full tunnel.log:"
+          cat tunnel.log
+          echo ""
+          echo "📄 Full flask.log:"
+          cat flask.log
+          exit 1
+
+      # =============================================
+      # مرحله ۹: ارسال خودکار آدرس جدید به گوگل اسکریپت
+      # (بدون دخالت دستی — با ۵ بار تلاش مجدد)
+      # =============================================
+      - name: Push new tunnel URL to Google Apps Script
+        id: push_gas
+        continue-on-error: true
+        env:
+          GAS_URL: ${{ secrets.GAS_WEBAPP_URL }}
+          GAS_SECRET: ${{ secrets.GAS_UPDATE_SECRET }}
+        run: |
+          echo "=========================================="
+          echo "📡 Pushing tunnel URL to Google Apps Script..."
+          echo "=========================================="
+          if [ -z "$GAS_URL" ] || [ -z "$GAS_SECRET" ]; then
+            echo "❌ GAS_WEBAPP_URL یا GAS_UPDATE_SECRET در Secrets تنظیم نشده!"
+            exit 1
+          fi
+
+          NEW_URL=$(cat tunnel_url.txt)
+          ENCODED_URL=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$NEW_URL")
+          ENDPOINT="${GAS_URL}?action=update&url=${ENCODED_URL}&secret=${GAS_SECRET}"
+
+          echo "New tunnel URL: $NEW_URL"
+          echo ""
+
+          SUCCESS=0
+          for attempt in $(seq 1 5); do
+            echo "--- Attempt $attempt/5 ---"
+            RESPONSE=$(curl -sL "$ENDPOINT")
+            echo "Response: $RESPONSE"
+            if echo "$RESPONSE" | grep -q '"success":true'; then
+              echo "✅ آدرس با موفقیت روی گوگل اسکریپت ثبت شد."
+              SUCCESS=1
+              break
+            fi
+            echo "❌ تلاش $attempt ناموفق بود، ۵ ثانیه صبر..."
+            sleep 5
+          done
+
+          if [ "$SUCCESS" -ne 1 ]; then
+            echo ""
+            echo "❌ بعد از ۵ تلاش، ارسال آدرس به گوگل اسکریپت ناموفق بود."
+            echo "⚠️ سرور همچنان روشن می‌ماند، اما گوگل اسکریپت آدرس قدیمی را دارد."
+            exit 1
+          fi
+
+      - name: Warn if GAS push failed
+        if: steps.push_gas.outcome == 'failure'
+        run: |
+          echo "::warning::ارسال آدرس تونل به گوگل اسکریپت شکست خورد. لطفاً لاگ مرحله قبل را بررسی کنید."
+
+      # =============================================
+      # مرحله ۱۰: چاپ URL نهایی
+      # =============================================
+      - name: Print tunnel URL (copy this)
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "🔗 YOUR TUNNEL URL:"
+          echo "=========================================="
+          cat tunnel_url.txt
+          echo ""
+          echo "🟢 The server will stay alive for 5 hours and 30 minutes."
+          echo "=========================================="
+
+      # =============================================
+      # مرحله ۱۱: نگهبان + نگهداری زنده (۵ ساعت و ۳۰ دقیقه)
+      # در پایان یا در صورت قطعی، نسخه B را صدا می‌زند.
+      # =============================================
+      - name: Keep alive & health-check loop (5h30m)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd $GITHUB_WORKSPACE
+          URL=$(cat tunnel_url.txt)
+          echo "=========================================="
+          echo "👁️ Starting keep-alive + health checker..."
+          echo "URL: $URL"
+          echo "Total checks: 66 (5 minutes each = 5h 30m)"
+          echo "=========================================="
+          for i in $(seq 1 66); do
+            sleep 300
+            echo ""
+            echo "=========================================="
+            echo "🔍 Check $i/66 at $(date)"
+            echo "=========================================="
+            echo "--- Checking localhost:5000/ping ---"
+            if curl -f -s -o /dev/null http://localhost:5000/ping; then
+              echo "✅ Flask local: OK"
+            else
+              echo "❌ Flask local: DOWN"
+              echo "⚠️ Triggering Server B..."
+              gh workflow run server-cloudflare-b.yml --ref main
+              exit 0
+            fi
+            echo "--- Checking $URL/ping ---"
+            if curl -f -s -o /dev/null "${URL}/ping"; then
+              echo "✅ Tunnel remote: OK"
+            else
+              echo "❌ Tunnel remote: DOWN"
+              echo "⚠️ Triggering Server B..."
+              gh workflow run server-cloudflare-b.yml --ref main
+              exit 0
+            fi
+            echo "✅ Server is alive ($i/66)"
+          done
+          echo ""
+          echo "=========================================="
+          echo "🔄 Time's up! Triggering Server B..."
+          echo "=========================================="
+          gh workflow run server-cloudflare-b.yml --ref main
+
+      # =============================================
+      # مرحله ۱۲: ذخیره لاگ‌ها به‌عنوان Artifact
+      # =============================================
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-logs-a
+          path: |
+            flask-install.log
+            flask.log
+            tunnel.log
+            tunnel_url.txt
+            flask.pid
+            tunnel.pid
+            server.py
