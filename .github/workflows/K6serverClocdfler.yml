@@ -1,0 +1,95 @@
+name: k6 Load Test on Cloudflare Tunnel
+
+on:
+  workflow_dispatch:
+    inputs:
+      tunnel_url:
+        description: 'آدرس تونل کلودفلر (مثلاً https://instrumentation-loading-derek-details.trycloudflare.com)'
+        required: true
+        default: 'https://instrumentation-loading-derek-details.trycloudflare.com'
+      rps_list:
+        description: 'لیست RPSها (با کاما جدا کنید)'
+        required: false
+        default: '10,30,60,90,120,150,180,190,200,210'
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Prepare k6 script
+        run: |
+          cat > script.js << 'EOF'
+          import http from 'k6/http';
+          import { check } from 'k6';
+
+          const TUNNEL_URL = __ENV.TUNNEL_URL || 'https://instrumentation-loading-derek-details.trycloudflare.com';
+          const RPS_LIST = (__ENV.RPS_LIST || '10,30,60,90,120,150,180,190,200,210').split(',').map(Number);
+
+          export let options = {
+            scenarios: {
+              ramp: {
+                executor: 'ramping-arrival-rate',
+                startRate: RPS_LIST[0] || 10,
+                timeUnit: '1s',
+                stages: RPS_LIST.map(rps => ({ target: rps, duration: '15s' })),
+                preAllocatedVUs: 50,
+                maxVUs: 100,
+              },
+            },
+            thresholds: {
+              http_req_failed: ['rate<0.05'], // کمتر از ۵٪ خطا قابل قبول
+            },
+          };
+
+          export default function () {
+            const url = TUNNEL_URL + '/ping';
+            const res = http.get(url, {
+              headers: { 'bypass-tunnel-reminder': 'any-value' },
+            });
+            check(res, {
+              'status is 200': (r) => r.status === 200,
+            });
+          }
+          EOF
+
+      - name: Run k6 test
+        run: |
+          k6 run script.js \
+            -e TUNNEL_URL="${{ github.event.inputs.tunnel_url }}" \
+            -e RPS_LIST="${{ github.event.inputs.rps_list }}" \
+            --summary-export=summary.json \
+            --out json=results.json
+        continue-on-error: true  # اجازه بده حتی با خطا هم ادامه بده
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k6-results
+          path: |
+            summary.json
+            results.json
+
+      - name: Print summary
+        run: |
+          echo "=========================================="
+          echo "📊 خلاصه تست"
+          echo "=========================================="
+          if [ -f summary.json ]; then
+            cat summary.json | jq '.metrics | {http_req_failed, http_req_duration, http_reqs, iterations}'
+          else
+            echo "❌ فایل summary.json پیدا نشد"
+          fi
+        continue-on-error: true
