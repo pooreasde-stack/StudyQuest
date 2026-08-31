@@ -28,6 +28,9 @@
 import hashlib
 import json
 import os
+import random
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta, time as dtime
 
@@ -42,6 +45,13 @@ LIVE_SESSION_FILE = os.path.join(BASE_DIR, "live_session.json")
 SCHEDULE_FILE = os.path.join(BASE_DIR, "session_schedule.json")
 PROGRESS_FILE = os.path.join(BASE_DIR, "progress.json")
 USERS_FILE = os.path.join(BASE_DIR, "users.json")
+# «در حال مطالعه‌ی زنده» — نگاشتِ userId -> {startedAt, endsAt}. این فایل
+# جدا از live_session.json (که فقط برای takeover تمام‌صفحه‌ی «هم‌خوان» با
+# فازِ زمان‌بندی‌شده است) نگه داشته می‌شود چون این ویژگی کاملاً مستقل و
+# سراسری است: هر کاربری هر وقت تایمرِ خودش را (نه فقط در پنجره‌ی هم‌خوان)
+# شروع کند، بقیه باید در تبِ «هفتگی» او را به‌صورت زنده با شمارش‌معکوس
+# ببینند.
+LIVE_READING_FILE = os.path.join(BASE_DIR, "live_reading.json")
 PROOFS_DIR = os.path.join(BASE_DIR, "challenge_proofs")
 CHAT_IMAGES_DIR = os.path.join(BASE_DIR, "challenge_chat_images")
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
@@ -54,6 +64,19 @@ HEAT_DAYS_COUNT = 28
 CHAIN_DAYS_COUNT = 7
 MAX_BACKFILL_DAYS = 60  # سقف عقب‌گرد برای جلوگیری از حلقه‌ی خیلی طولانی
 DEFAULT_TIMEZONE_OFFSET_HOURS = 3.5  # به‌وقت ایران؛ در session_schedule.json قابل override
+
+# --- «در حال مطالعه‌ی زنده» --------------------------------------------
+MIN_LIVE_READING_MINUTES = 1
+MAX_LIVE_READING_MINUTES = 300  # سقف ایمنی؛ جلوگیری از باگِ کلاینت که مقدارِ نجومی بفرستد
+
+# --- شبیه‌سازیِ ۲۹ رباتِ مطالعه‌کننده (پایین‌تر، بخشِ «ربات‌ها») ----------
+BOT_COUNT = 29
+BOT_DAILY_STUDY_PROBABILITY = 0.67
+BOT_MIN_SESSION_MINUTES = 15
+BOT_MAX_SESSION_MINUTES = 90
+BOT_WINDOW_START_MINUTE = 7 * 60   # ۰۷:۰۰
+BOT_WINDOW_END_MINUTE = 22 * 60    # ۲۲:۰۰
+BOT_TICK_SECONDS = 30
 
 COLOR_PALETTE = ["teal", "violet", "amber", "rose", "blue", "emerald", "fuchsia", "cyan"]
 
@@ -467,6 +490,73 @@ def _get_live_session(today, schedule):
 
 
 # ================================================================
+# «در حال مطالعه‌ی زنده» — کمکی‌ها
+# ================================================================
+# قرارداد فایل live_reading.json: {"userId": {"startedAt": iso, "endsAt": iso}, ...}
+# هیچ state machine‌ای در RAM نگه داشته نمی‌شود (هم‌راستا با بقیه‌ی این
+# فایل) — «الان کی در حال مطالعه است» همیشه با مقایسه‌ی endsAt با ساعتِ
+# فعلی محاسبه می‌شود، هم برای رکوردهای واقعیِ کاربرها (از TimerService)
+# هم برای رکوردهای رباتی (پایین‌تر).
+
+def _purge_expired_reading_locked(now_local):
+    """رکوردهای منقضی‌شده را از live_reading.json حذف می‌کند (باید از
+    داخل _file_lock صدا زده شود). دیکشنریِ تمیزشده را برمی‌گرداند."""
+    reading = _read_json_locked(LIVE_READING_FILE, {})
+    changed = False
+    cleaned = {}
+    for uid, rec in reading.items():
+        ends_at = rec.get("endsAt")
+        try:
+            still_active = ends_at and datetime.fromisoformat(ends_at) > now_local
+        except ValueError:
+            still_active = False
+        if still_active:
+            cleaned[uid] = rec
+        else:
+            changed = True
+    if changed:
+        _write_json_unlocked(LIVE_READING_FILE, cleaned)
+    return cleaned
+
+
+def _active_reading_map(now_local):
+    """نسخه‌ی سبک (بدون قفل مضاعف اگر لازم نباشد) برای استفاده در GET
+    /api/challenges/state — چون ممکن است لازم باشد فایل را هم پاک‌سازی
+    کند، از قفل استفاده می‌شود."""
+    with _file_lock:
+        return _purge_expired_reading_locked(now_local)
+
+
+def _seconds_left_for_reading(rec, now_local):
+    try:
+        ends_at = datetime.fromisoformat(rec.get("endsAt"))
+    except (ValueError, TypeError):
+        return 0
+    return max(0, int((ends_at - now_local).total_seconds()))
+
+
+def _set_live_reading(user_id, duration_minutes, now_local):
+    """شروع/تمدیدِ «در حال مطالعه‌ی زنده»ی یک کاربر. از داخل _file_lock صدا زده می‌شود."""
+    duration_minutes = max(MIN_LIVE_READING_MINUTES, min(MAX_LIVE_READING_MINUTES, duration_minutes))
+    ends_at = now_local + timedelta(minutes=duration_minutes)
+    reading = _read_json_locked(LIVE_READING_FILE, {})
+    reading[user_id] = {"startedAt": _fmt_iso(now_local), "endsAt": _fmt_iso(ends_at)}
+    _write_json_unlocked(LIVE_READING_FILE, reading)
+
+
+def _clear_live_reading(user_id):
+    """پایانِ «در حال مطالعه‌ی زنده»ی یک کاربر. از داخل _file_lock صدا زده می‌شود."""
+    reading = _read_json_locked(LIVE_READING_FILE, {})
+    if user_id in reading:
+        del reading[user_id]
+        _write_json_unlocked(LIVE_READING_FILE, reading)
+
+
+def _fmt_iso(dt):
+    return dt.replace(microsecond=0).isoformat()
+
+
+# ================================================================
 # اندپوینت‌ها
 # ================================================================
 
@@ -503,7 +593,17 @@ def challenges_state():
     # --- لیدربورد هفتگی (از progress.json، بدون فایل جداگانه) ---------
     week_end = today_week_start + timedelta(days=6)
     weekly_totals = _weekly_minutes_all_users(progress, today_week_start, week_end, offset_hours)
+
+    # «در حال مطالعه‌ی زنده»: نگاشتِ userId -> ثانیه‌ی باقی‌مانده، تا در
+    # هر ردیفِ لیدربورد یک بجِ زنده با شمارش‌معکوس نشان داده شود — دقیقاً
+    # همان چیزی که باعث می‌شود اگر یک کاربر همین الان تایمرش را روشن کند،
+    # بقیه بلافاصله (با باز/رفرش‌شدنِ همین تبِ «هفتگی») او را در حال
+    # مطالعه با یک تایمر ببینند.
+    active_reading = _active_reading_map(now_local)
+    reading_seconds = {uid: _seconds_left_for_reading(rec, now_local) for uid, rec in active_reading.items()}
+
     leaderboard = []
+    seen_uids = set()
     for uid, minutes in sorted(weekly_totals.items(), key=lambda kv: kv[1], reverse=True):
         display = _user_display(uid)
         leaderboard.append({
@@ -513,7 +613,10 @@ def challenges_state():
             "colorKey": display["colorKey"],
             "minutes": minutes,
             "isMe": uid == user_id,
+            "reading": uid in reading_seconds,
+            "readingSecondsLeft": reading_seconds.get(uid, 0),
         })
+        seen_uids.add(uid)
     if user_id not in weekly_totals:
         display = _user_display(user_id)
         leaderboard.append({
@@ -523,6 +626,26 @@ def challenges_state():
             "colorKey": display["colorKey"],
             "minutes": 0,
             "isMe": True,
+            "reading": user_id in reading_seconds,
+            "readingSecondsLeft": reading_seconds.get(user_id, 0),
+        })
+        seen_uids.add(user_id)
+    # کاربرهایی که همین الان در حال مطالعه‌اند ولی هنوز هیچ دقیقه‌ای این
+    # هفته ثبت نکرده‌اند (جلسه‌شان هنوز تمام نشده) هم باید در جدول دیده
+    # شوند — وگرنه بجِ «در حال مطالعه» هیچ‌جا نمایش داده نمی‌شد.
+    for uid in reading_seconds:
+        if uid in seen_uids:
+            continue
+        display = _user_display(uid)
+        leaderboard.append({
+            "userId": display["userId"],
+            "name": display["name"],
+            "initials": display["initials"],
+            "colorKey": display["colorKey"],
+            "minutes": 0,
+            "isMe": uid == user_id,
+            "reading": True,
+            "readingSecondsLeft": reading_seconds.get(uid, 0),
         })
 
     days_left = max(0, (week_end - today).days)
@@ -570,6 +693,48 @@ def challenges_state():
     # فعالی نیست» که قبلاً دیده شد. این envelope را عوض نکن مگر این‌که
     # سمت اپ (StateResponse) هم هم‌زمان تغییر کند.
     return jsonify(response), 200
+
+
+@challenges_bp.route("/api/challenges/live-reading/start", methods=["POST"])
+def challenges_live_reading_start():
+    """صدا زده می‌شود همان لحظه‌ای که TimerService یک جلسه‌ی مطالعه را
+    شروع می‌کند (یا از حالت مکث ادامه می‌دهد). durationMinutes یعنی «چند
+    دقیقه‌ی دیگر از الان» این جلسه ادامه دارد (نه کل مدتِ جلسه) — کلاینت
+    برای resume همان مقدارِ باقی‌مانده را می‌فرستد. اگر کاربر از قبل هم
+    یک رکوردِ زنده داشت (مثلاً بدون STOP، دوباره START زده)، این مقدار
+    جایگزینِ آن می‌شود، نه جمع با آن."""
+    body = request.get_json(silent=True) or {}
+    user_id = body.get("userId")
+    duration_minutes = body.get("durationMinutes")
+    if not user_id:
+        return _error("فیلد userId الزامی است", 400)
+    try:
+        duration_minutes = int(duration_minutes)
+    except (TypeError, ValueError):
+        return _error("فیلد durationMinutes الزامی است", 400)
+    if duration_minutes <= 0:
+        return _error("durationMinutes باید مثبت باشد", 400)
+
+    now_local = _now_local()
+    with _file_lock:
+        _set_live_reading(user_id, duration_minutes, now_local)
+
+    return _success(message="وضعیت «در حال مطالعه» ثبت شد")
+
+
+@challenges_bp.route("/api/challenges/live-reading/stop", methods=["POST"])
+def challenges_live_reading_stop():
+    """صدا زده می‌شود وقتی تایمر مکث/متوقف/تمام می‌شود (یا سرویس نابود
+    می‌شود). نبودِ رکورد برای این کاربر خطا نیست — idempotent است."""
+    body = request.get_json(silent=True) or {}
+    user_id = body.get("userId")
+    if not user_id:
+        return _error("فیلد userId الزامی است", 400)
+
+    with _file_lock:
+        _clear_live_reading(user_id)
+
+    return _success(message="وضعیت «در حال مطالعه» پاک شد")
 
 
 @challenges_bp.route("/api/challenges/checkin", methods=["POST"])
@@ -776,3 +941,210 @@ def ensure_initial_files():
     schedule = _read_json(SCHEDULE_FILE, _default_schedule())
     today_str = _today_str()
     _read_json(LIVE_SESSION_FILE, _default_live_session(_session_key(schedule, today_str), today_str))
+    _read_json(LIVE_READING_FILE, {})
+
+
+# ================================================================
+# ۲۹ رباتِ مطالعه‌کننده
+# ================================================================
+# چون هیچ دیتابیسی وجود ندارد و سرور هر ~۵:۳۰ ساعت کامل ری‌استارت
+# می‌شود (progress.json/users.json/live_reading.json هر بار از صفر
+# ساخته می‌شوند)، ربات‌ها را با یک فایل/اسکریپتِ جدا و یک‌بارمصرف
+# نمی‌سازیم — چون همان لحظه‌ی ری‌استارتِ بعدی، هرچه نوشته بود پاک
+# می‌شود. به‌جایش این تردِ پس‌زمینه، همیشه همراه با خودِ سرور زنده
+# است و هر روز (به‌وقتِ محلیِ همان تایم‌زونی که بقیه‌ی این فایل استفاده
+# می‌کند) برای هر ۲۹ ربات یک برنامه‌ی واقعی می‌سازد: ۶۷٪ احتمال که آن
+# روز اصلاً بخوانند، و اگر خواندند، یک بازه‌ی ۱۵ تا ۹۰ دقیقه‌ای که
+# کاملاً داخل بازه‌ی ۰۷:۰۰ تا ۲۲:۰۰ جا می‌شود.
+#
+# در لحظه‌ی شروعِ آن بازه، رباتِ موردنظر دقیقاً مثل یک کاربرِ واقعی که
+# تایمرش را روشن کرده وارد live_reading.json می‌شود (یعنی در تبِ
+# «هفتگی» با بجِ زنده و شمارش‌معکوس دیده می‌شود) و در لحظه‌ی پایان،
+# دقیقاً مثل submitProgress واقعیِ اپ، یک رکورد در progress.json ثبت
+# می‌شود — یعنی از دیدِ بقیه‌ی سیستم (لیدربورد، استریک، تاریخچه) هیچ
+# فرقی با یک کاربرِ واقعی ندارد.
+#
+# نکته‌ی مهمِ کارایی (طبق درخواست): چون این هر ۲۹ نفر با هم بررسی
+# می‌شوند، در هر tick فقط یک بار progress.json و یک بار live_reading.json
+# خوانده/نوشته می‌شود (نه ۲۹ درخواستِ جدا) — یعنی حداکثر دو عملیاتِ
+# فایل به‌ازای کل گروه، نه به‌ازای هر ربات.
+
+BOT_FIRST_NAMES = [
+    "امیرحسین", "پارسا", "آرمین", "رادین", "کیان", "متین", "آرین", "دانیال",
+    "سینا", "علی", "محمد", "حسام", "پویا", "شایان", "نیما",
+    "نگار", "ترانه", "باران", "ستایش", "هستی", "آیدا", "رها",
+    "پرنیا", "یاسمین", "درسا", "الینا", "ملیکا", "کیمیا", "زهرا",
+]
+BOT_LAST_NAMES = [
+    "کریمی", "محمدی", "حسینی", "رضایی", "احمدی", "موسوی", "قاسمی",
+    "صادقی", "نجفی", "رحیمی", "جعفری", "کاظمی", "عباسی", "طاهری",
+    "یوسفی", "شریفی", "امینی", "صالحی", "فرجی", "نوری", "رستمی",
+    "عزیزی", "فرهادی", "بهرامی", "اکبری", "سلطانی", "غفاری", "خلیلی",
+    "وحیدی",
+]
+
+
+def _bot_user_id(index):
+    return "bot_{:02d}".format(index + 1)
+
+
+def _build_bot_roster():
+    roster = []
+    for i in range(BOT_COUNT):
+        first = BOT_FIRST_NAMES[i % len(BOT_FIRST_NAMES)]
+        last = BOT_LAST_NAMES[i % len(BOT_LAST_NAMES)]
+        roster.append({"userId": _bot_user_id(i), "firstName": first, "lastName": last})
+    return roster
+
+
+def _ensure_bot_users_registered():
+    """یک‌بار، در یک عملیاتِ نوشتنِ واحد، هر ۲۹ ربات را (اگر از قبل در
+    users.json نبودند) اضافه می‌کند — دقیقاً همان قراردادِ رکوردِ
+    /api/register، تا _user_display بتواند اسم/اینیشیال درستشان را
+    بسازد."""
+    roster = _build_bot_roster()
+    with _file_lock:
+        users = _read_json_locked(USERS_FILE, [])
+        existing_ids = {u.get("userId") for u in users}
+        now_iso = datetime.utcnow().isoformat() + "Z"
+        changed = False
+        for bot in roster:
+            if bot["userId"] in existing_ids:
+                continue
+            users.append({
+                "userId": bot["userId"],
+                "firstName": bot["firstName"],
+                "lastName": bot["lastName"],
+                "phoneNumber": "",
+                "birthDay": None,
+                "birthMonth": None,
+                "birthYear": None,
+                "gender": "",
+                "educationLevel": "",
+                "field": "",
+                "createdAt": now_iso,
+                "updatedAt": now_iso,
+            })
+            changed = True
+        if changed:
+            _write_json_unlocked(USERS_FILE, users)
+    return [b["userId"] for b in roster]
+
+
+def _generate_bot_day_plan(bot_ids, day_date, rng):
+    """برای یک روزِ مشخص، برای هر ربات تصمیم می‌گیرد امروز می‌خواند یا نه
+    و اگر بله، بازه‌ی (start_dt, end_dt) را می‌سازد. rng یک نمونه‌ی
+    مستقلِ random.Random است (برای این‌که این تابع کاملاً قابل‌تست/
+    determinستیک‌سازی باشد و به وضعیتِ سراسریِ ماژولِ random وابسته نباشد)."""
+    plan = {}
+    for bot_id in bot_ids:
+        if rng.random() >= BOT_DAILY_STUDY_PROBABILITY:
+            plan[bot_id] = None
+            continue
+        duration = rng.randint(BOT_MIN_SESSION_MINUTES, BOT_MAX_SESSION_MINUTES)
+        latest_start = BOT_WINDOW_END_MINUTE - duration
+        start_minute = rng.randint(BOT_WINDOW_START_MINUTE, latest_start)
+        start_dt = datetime.combine(day_date, dtime(0, 0)) + timedelta(minutes=start_minute)
+        end_dt = start_dt + timedelta(minutes=duration)
+        plan[bot_id] = (start_dt, end_dt)
+    return plan
+
+
+class _BotSimulationState:
+    """وضعیتِ کاملاً در-حافظه‌ی تردِ شبیه‌سازی. هیچ‌چیز از این کلاس روی
+    دیسک نوشته نمی‌شود — اگر سرور ری‌استارت شود، این وضعیت هم از صفر
+    ساخته می‌شود (هم‌راستا با بقیه‌ی این فایل که هیچ state machine‌ای
+    را بین ری‌استارت‌ها حفظ نمی‌کند)."""
+
+    def __init__(self, bot_ids):
+        self.bot_ids = bot_ids
+        self.plan_date = None
+        self.plan = {}
+        self.started = set()
+        self.finished = set()
+
+
+def _bot_simulation_tick(state, rng):
+    now_local = _now_local()
+    today = now_local.date()
+
+    if state.plan_date != today:
+        state.plan = _generate_bot_day_plan(state.bot_ids, today, rng)
+        state.started = set()
+        state.finished = set()
+        state.plan_date = today
+
+    to_start = []   # لیستِ (userId, start_dt, end_dt)
+    to_finish = []  # لیستِ (userId, minutes, end_dt)
+
+    for bot_id, window in state.plan.items():
+        if window is None:
+            continue
+        start_dt, end_dt = window
+        if bot_id in state.finished:
+            continue
+        if now_local >= end_dt:
+            to_finish.append((bot_id, int((end_dt - start_dt).total_seconds() // 60), end_dt))
+            state.finished.add(bot_id)
+        elif now_local >= start_dt and bot_id not in state.started:
+            to_start.append((bot_id, start_dt, end_dt))
+            state.started.add(bot_id)
+
+    if not to_start and not to_finish:
+        return
+
+    # طبق درخواست: کل ۲۹ ربات با هم، در یک عملیاتِ نوشتنِ واحد به‌ازای هر
+    # فایل (نه یک نوشتن به‌ازای هر ربات).
+    with _file_lock:
+        if to_start:
+            reading = _read_json_locked(LIVE_READING_FILE, {})
+            for bot_id, start_dt, end_dt in to_start:
+                reading[bot_id] = {
+                    "startedAt": _fmt_iso(start_dt),
+                    "endsAt": _fmt_iso(end_dt),
+                }
+            _write_json_unlocked(LIVE_READING_FILE, reading)
+
+        if to_finish:
+            reading = _read_json_locked(LIVE_READING_FILE, {})
+            progress = _read_json_locked(PROGRESS_FILE, [])
+            offset_hours = _timezone_offset_hours()
+            for bot_id, minutes, end_dt in to_finish:
+                if bot_id in reading:
+                    del reading[bot_id]
+                # clientTimestamp باید UTC باشد (دقیقاً مثل isoUtcNow() سمتِ
+                # اپ) چون _entry_date_str بعداً خودش offset_hours را رویش
+                # اعمال می‌کند؛ end_dt همین‌جا محلی است، پس باید قبل از
+                # ذخیره برگردد به UTC — وگرنه offset دوبار اعمال می‌شود.
+                end_dt_utc = end_dt - timedelta(hours=offset_hours)
+                progress.append({
+                    "userId": bot_id,
+                    "eventId": "daily_study",
+                    "minutes": minutes,
+                    "consistencyDays": 0,
+                    "clientTimestamp": end_dt_utc.replace(microsecond=0).isoformat() + "Z",
+                    "receivedAt": datetime.utcnow().isoformat() + "Z",
+                })
+            _write_json_unlocked(LIVE_READING_FILE, reading)
+            _write_json_unlocked(PROGRESS_FILE, progress)
+
+
+def _bot_simulation_loop(state):
+    rng = random.Random()
+    while True:
+        try:
+            _bot_simulation_tick(state, rng)
+        except Exception as ex:  # هیچ خطای این تردِ پس‌زمینه نباید کل سرور را پایین بیاورد
+            print("⚠️ خطا در حلقه‌ی شبیه‌سازیِ ربات‌ها: {}".format(ex))
+        time.sleep(BOT_TICK_SECONDS)
+
+
+def start_bot_simulation():
+    """باید دقیقاً یک‌بار، از server.py هنگام بالا آمدنِ سرور صدا زده
+    شود. یک تردِ daemon (با خروجِ خودکار وقتی خودِ پردازه‌ی سرور بسته
+    شود) راه می‌اندازد."""
+    bot_ids = _ensure_bot_users_registered()
+    state = _BotSimulationState(bot_ids)
+    t = threading.Thread(target=_bot_simulation_loop, args=(state,), name="bot-simulation", daemon=True)
+    t.start()
+    print("🤖 شبیه‌سازیِ {} ربات مطالعه‌کننده شروع شد".format(len(bot_ids)))

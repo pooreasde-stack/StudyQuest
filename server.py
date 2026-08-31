@@ -331,6 +331,8 @@ def root():
             "POST /api/challenges/proof",
             "POST /api/challenges/chat-image",
             "GET  /api/challenges/chat-image-file/<filename>",
+            "POST /api/challenges/live-reading/start",
+            "POST /api/challenges/live-reading/stop",
         ])
     return jsonify({
         "service": "StudyQuest Server",
@@ -375,6 +377,9 @@ if __name__ == "__main__":
             print("🔄 Calling challenges_routes.ensure_initial_files()...")
             challenges_routes.ensure_initial_files()
             print("✅ challenges_routes files ensured")
+
+            print("🤖 Starting bot study simulation...")
+            challenges_routes.start_bot_simulation()
 
         print("✅ All files ready.")
 
