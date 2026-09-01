@@ -222,5 +222,21 @@
     "consistencyDays": 0,
     "clientTimestamp": "2026-09-01T16:44:00Z",
     "receivedAt": "2026-09-01T16:44:25.304992Z"
+  },
+  {
+    "userId": "bot_20",
+    "eventId": "daily_study",
+    "minutes": 50,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T17:01:00Z",
+    "receivedAt": "2026-09-01T17:01:25.317041Z"
+  },
+  {
+    "userId": "bot_24",
+    "eventId": "daily_study",
+    "minutes": 89,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T17:02:00Z",
+    "receivedAt": "2026-09-01T17:02:25.318209Z"
   }
 ]
