@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   actions: write
 
 concurrency:
@@ -21,6 +21,59 @@ jobs:
       # =============================================
       - name: Checkout
         uses: actions/checkout@v4
+
+      # =============================================
+      # مرحله ۱.۵: آماده‌سازیِ ذخیره‌ی خودکارِ داده در مخزن
+      # چرا: هر بار که این ورک‌فلو اجرا می‌شه یه چک‌اوتِ تازه از ریپو
+      # می‌گیره؛ فایل‌های دیتای زمانِ اجرا (کاربرها، پیشرفت، چتِ هم‌خوان،
+      # عکس‌های مدرک/چت و ...) روی دیسکِ رانر ساخته می‌شن که با تمومِ
+      # شدنِ جاب پاک می‌شن. راه‌حل: همون فایل‌ها رو دوره‌ای commit/push
+      # می‌کنیم روی خودِ مخزن، همون‌جوری که سرور خونده‌شون — اینطوری با
+      # هر چک‌اوتِ بعدی (چه همین ورک‌فلو، چه A) آخرین نسخه‌شون از قبل
+      # حاضره و هیچ‌وقت از صفر شروع نمی‌شه.
+      # =============================================
+      - name: Prepare data-persistence script
+        run: |
+          git config user.name "studyquest-bot"
+          git config user.email "studyquest-bot@users.noreply.github.com"
+          cat > persist_data.sh << 'PERSIST_EOF'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          cd "$GITHUB_WORKSPACE" || exit 0
+
+          FILES_TO_TRACK="users.json progress.json live_session.json challenges_streak.json live_reading.json session_schedule.json events.json challenge_proofs challenge_chat_images"
+
+          EXISTING=""
+          for f in $FILES_TO_TRACK; do
+            if [ -e "$f" ]; then
+              EXISTING="$EXISTING $f"
+            fi
+          done
+          if [ -z "$EXISTING" ]; then
+            exit 0
+          fi
+
+          git add -A -- $EXISTING
+
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+
+          git commit -m "chore: persist server data [skip ci]" --quiet
+
+          for attempt in 1 2 3; do
+            if git pull --rebase --autostash origin main --quiet 2>/dev/null && git push origin HEAD:main --quiet 2>/dev/null; then
+              echo "✅ داده‌ها روی مخزن ذخیره شد (تلاش $attempt)"
+              exit 0
+            fi
+            echo "⚠️ ذخیره‌ی داده روی مخزن ناموفق بود (تلاش $attempt)، ۵ ثانیه صبر..."
+            sleep 5
+          done
+          echo "❌ ذخیره‌ی داده‌ها روی مخزن بعد از چند تلاش شکست خورد — سرور همچنان کار می‌کند، فقط این دور دیتا کامیت نشد"
+          exit 0
+          PERSIST_EOF
+          chmod +x persist_data.sh
+          echo "✅ persist_data.sh آماده شد"
 
       # =============================================
       # مرحله ۲: نصب Flask
@@ -289,6 +342,8 @@ jobs:
               echo "✅ Flask local: OK"
             else
               echo "❌ Flask local: DOWN"
+              echo "💾 Persisting data before handoff..."
+              ./persist_data.sh
               echo "⚠️ Triggering Server A..."
               gh workflow run server-cloudflare-a.yml --ref main
               exit 0
@@ -298,14 +353,20 @@ jobs:
               echo "✅ Tunnel remote: OK"
             else
               echo "❌ Tunnel remote: DOWN"
+              echo "💾 Persisting data before handoff..."
+              ./persist_data.sh
               echo "⚠️ Triggering Server A..."
               gh workflow run server-cloudflare-a.yml --ref main
               exit 0
             fi
             echo "✅ Server is alive ($i/66)"
+            echo "💾 Persisting data (periodic)..."
+            ./persist_data.sh
           done
           echo ""
           echo "=========================================="
+          echo "💾 Persisting data before handoff..."
+          ./persist_data.sh
           echo "🔄 Time's up! Triggering Server A..."
           echo "=========================================="
           gh workflow run server-cloudflare-a.yml --ref main
