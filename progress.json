@@ -86,5 +86,93 @@
     "consistencyDays": 0,
     "clientTimestamp": "2026-09-01T12:17:00Z",
     "receivedAt": "2026-09-01T12:17:21.634049Z"
+  },
+  {
+    "userId": "bot_01",
+    "eventId": "daily_study",
+    "minutes": 15,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T04:55:00Z",
+    "receivedAt": "2026-09-01T13:19:25.166329Z"
+  },
+  {
+    "userId": "bot_02",
+    "eventId": "daily_study",
+    "minutes": 30,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T04:57:00Z",
+    "receivedAt": "2026-09-01T13:19:25.166336Z"
+  },
+  {
+    "userId": "bot_11",
+    "eventId": "daily_study",
+    "minutes": 53,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T07:48:00Z",
+    "receivedAt": "2026-09-01T13:19:25.166341Z"
+  },
+  {
+    "userId": "bot_15",
+    "eventId": "daily_study",
+    "minutes": 48,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T07:38:00Z",
+    "receivedAt": "2026-09-01T13:19:25.166353Z"
+  },
+  {
+    "userId": "bot_17",
+    "eventId": "daily_study",
+    "minutes": 65,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T10:42:00Z",
+    "receivedAt": "2026-09-01T13:19:25.166359Z"
+  },
+  {
+    "userId": "bot_19",
+    "eventId": "daily_study",
+    "minutes": 57,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T10:10:00Z",
+    "receivedAt": "2026-09-01T13:19:25.166362Z"
+  },
+  {
+    "userId": "bot_21",
+    "eventId": "daily_study",
+    "minutes": 59,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T07:22:00Z",
+    "receivedAt": "2026-09-01T13:19:25.166366Z"
+  },
+  {
+    "userId": "bot_22",
+    "eventId": "daily_study",
+    "minutes": 77,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T08:00:00Z",
+    "receivedAt": "2026-09-01T13:19:25.166369Z"
+  },
+  {
+    "userId": "bot_23",
+    "eventId": "daily_study",
+    "minutes": 45,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T07:58:00Z",
+    "receivedAt": "2026-09-01T13:19:25.166373Z"
+  },
+  {
+    "userId": "bot_28",
+    "eventId": "daily_study",
+    "minutes": 79,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T07:59:00Z",
+    "receivedAt": "2026-09-01T13:19:25.166376Z"
+  },
+  {
+    "userId": "bot_29",
+    "eventId": "daily_study",
+    "minutes": 55,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T07:34:00Z",
+    "receivedAt": "2026-09-01T13:19:25.166380Z"
   }
 ]
