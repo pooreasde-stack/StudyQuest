@@ -78,6 +78,22 @@ except Exception as e:
     challenges_routes = None
 
 # ================================================================
+# تلاش برای import stats_routes (آمار کلِ کاربران/کاربرانِ فعال)
+# ================================================================
+print("\n🔄 Attempting to import stats_routes...")
+try:
+    import stats_routes
+    print("✅ stats_routes imported successfully")
+    STATS_AVAILABLE = True
+except Exception as e:
+    print(f"❌ Failed to import stats_routes: {e}")
+    import traceback
+    traceback.print_exc()
+    print("⚠️ Continuing without stats_routes")
+    STATS_AVAILABLE = False
+    stats_routes = None
+
+# ================================================================
 # توابع کمکی
 # ================================================================
 
@@ -148,6 +164,23 @@ if CHALLENGES_AVAILABLE:
         CHALLENGES_AVAILABLE = False
 else:
     print("⚠️ challenges_routes not available, skipping blueprint registration")
+
+# ================================================================
+# اتصال Blueprint آمار کاربران (اگر import موفق بود)
+# ================================================================
+if STATS_AVAILABLE:
+    try:
+        print("\n🔧 Initializing stats_routes...")
+        stats_routes.init_stats(BASE_DIR)
+        app.register_blueprint(stats_routes.stats_bp)
+        print("✅ stats_routes blueprint registered")
+    except Exception as e:
+        print(f"❌ Error registering stats blueprint: {e}")
+        import traceback
+        traceback.print_exc()
+        STATS_AVAILABLE = False
+else:
+    print("⚠️ stats_routes not available, skipping blueprint registration")
 
 # ================================================================
 # مسیرهای اصلی
@@ -331,9 +364,12 @@ def root():
             "POST /api/challenges/proof",
             "POST /api/challenges/chat-image",
             "GET  /api/challenges/chat-image-file/<filename>",
+            "POST /api/challenges/chat-react",
             "POST /api/challenges/live-reading/start",
             "POST /api/challenges/live-reading/stop",
         ])
+    if STATS_AVAILABLE:
+        endpoints.append("GET  /api/stats/users")
     return jsonify({
         "service": "StudyQuest Server",
         "status": "running",

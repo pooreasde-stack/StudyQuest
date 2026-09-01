@@ -25,6 +25,8 @@
       پر می‌شود) محاسبه می‌شود.
 """
 
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -55,6 +57,49 @@ LIVE_READING_FILE = os.path.join(BASE_DIR, "live_reading.json")
 PROOFS_DIR = os.path.join(BASE_DIR, "challenge_proofs")
 CHAT_IMAGES_DIR = os.path.join(BASE_DIR, "challenge_chat_images")
 ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+MAX_IMAGE_BYTES = 12 * 1024 * 1024  # بعد از دیکد base64 — سقفِ منطقی برای جلوگیری از سوءاستفاده
+
+
+def _decode_and_save_base64_image(image_base64, filename_hint, target_dir, safe_name_prefix):
+    """عکسِ base64 اومده از کلاینت رو دیکد و ذخیره می‌کند.
+
+    ⚠️ این مسیر جایگزینِ multipart/form-data شد چون درخواست‌ها از پروکسیِ
+    گوگل‌اسکریپت (Code.gs) رد می‌شوند و آن پروکسی همیشه Content-Type را
+    "application/json" می‌فرستد — یک بدنه‌ی multipart واقعی boundary‌اش
+    را همان‌جا از دست می‌داد و اینجا هرگز request.files پر نمی‌شد. تا وقتی
+    خودِ Code.gs هم برای این دو endpoint اصلاح نشده، همه‌چیز باید از
+    مسیرِ JSON عادی (که پروکسی سالم رد می‌کند) برود.
+
+    برمی‌گرداند: (safe_name, error_message). یکی از این دو همیشه None است.
+    """
+    if not image_base64:
+        return None, "فیلد imageBase64 الزامی است"
+
+    # اگه کلاینت data URI کامل فرستاده باشه (data:image/jpeg;base64,....)
+    b64_data = image_base64
+    if "," in b64_data and b64_data.strip().lower().startswith("data:"):
+        b64_data = b64_data.split(",", 1)[1]
+
+    try:
+        raw = base64.b64decode(b64_data, validate=False)
+    except (binascii.Error, ValueError):
+        return None, "فرمتِ base64 عکس نامعتبر است"
+
+    if not raw:
+        return None, "عکسِ ارسالی خالی است"
+    if len(raw) > MAX_IMAGE_BYTES:
+        return None, "حجمِ عکس بیش از حد مجاز است"
+
+    ext = os.path.splitext(filename_hint or "")[1].lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        ext = ".jpg"
+
+    os.makedirs(target_dir, exist_ok=True)
+    safe_name = "{}{}".format(safe_name_prefix, ext)
+    with open(os.path.join(target_dir, safe_name), "wb") as f:
+        f.write(raw)
+
+    return safe_name, None
 
 # --- ثابت‌های قابل‌تنظیم (نگاه کن به توضیح بالای فایل) -----------------
 FULL_DAY_MINUTES = 30
@@ -773,11 +818,41 @@ def challenges_checkin():
     return _success(message="حضور شما ثبت شد")
 
 
+def _reply_preview_for(m):
+    """یک خلاصه‌ی کوتاه از پیام برای نمایش در نقل‌قولِ «پاسخ» می‌سازد."""
+    if m.get("proof"):
+        return "📸 مدرک مطالعه"
+    if m.get("imageUrl"):
+        return "🖼️ عکس"
+    text = (m.get("text") or "").strip()
+    if len(text) > 60:
+        text = text[:60] + "…"
+    return text
+
+
+def _find_reply_target(chat_list, reply_to_id):
+    """پیامِ اصلی که به آن پاسخ داده شده را پیدا می‌کند و آبجکتِ replyTo
+    (برای نمایش کوتاه در بالای حباب) می‌سازد. اگر پیدا نشود (مثلاً پاک
+    شده یا خارج از بازه‌ی ۲۰۰ پیامِ اخیر رفته) None برمی‌گرداند — کلاینت
+    در این حالت فقط بدونِ نقل‌قول نمایش می‌دهد، نه اینکه ارسال شکست بخورد."""
+    if not reply_to_id:
+        return None
+    for m in chat_list:
+        if m.get("id") == reply_to_id:
+            return {
+                "id": m["id"],
+                "name": m.get("name") or "",
+                "preview": _reply_preview_for(m),
+            }
+    return None
+
+
 @challenges_bp.route("/api/challenges/chat", methods=["POST"])
 def challenges_chat():
     body = request.get_json(silent=True) or {}
     user_id = body.get("userId")
     text = body.get("text")
+    reply_to_id = body.get("replyToId")
     if not user_id or not text:
         return _error("فیلدهای userId و text الزامی‌اند", 400)
 
@@ -786,12 +861,14 @@ def challenges_chat():
     display = _user_display(user_id)
 
     message = {
+        "id": uuid.uuid4().hex[:12],
         "userId": display["userId"],
         "name": display["name"],
         "initials": display["initials"],
         "colorKey": display["colorKey"],
         "text": text,
         "time": now_local.strftime("%H:%M"),
+        "reactions": {},
     }
 
     with _file_lock:
@@ -802,6 +879,9 @@ def challenges_chat():
             session = _default_live_session(session_key, today_str)
 
         chat = session.setdefault("chat", [])
+        reply_to = _find_reply_target(chat, reply_to_id)
+        if reply_to:
+            message["replyTo"] = reply_to
         chat.append(message)
         # فقط ۲۰۰ پیام آخر امروز نگه داشته می‌شود
         session["chat"] = chat[-200:]
@@ -813,18 +893,23 @@ def challenges_chat():
 
 @challenges_bp.route("/api/challenges/proof", methods=["POST"])
 def challenges_proof():
-    user_id = request.form.get("userId")
+    # ⚠️ عمداً JSON (نه multipart/form-data) — به دلیلِ توضیحِ بالای
+    # _decode_and_save_base64_image (پروکسیِ گوگل‌اسکریپت باندریِ
+    # multipart را گم می‌کرد و این endpoint همیشه «ارسال ناموفق» می‌داد).
+    body = request.get_json(silent=True) or {}
+    user_id = body.get("userId")
     if not user_id:
         return _error("فیلد userId الزامی است", 400)
 
-    image = request.files.get("image")
     today_str = _today_str()
+    image_base64 = body.get("imageBase64")
+    filename_hint = body.get("filename")
 
-    if image and image.filename:
-        os.makedirs(PROOFS_DIR, exist_ok=True)
-        ext = os.path.splitext(image.filename)[1] or ".jpg"
-        safe_name = "{}_{}{}".format(today_str, user_id, ext)
-        image.save(os.path.join(PROOFS_DIR, safe_name))
+    if image_base64:
+        safe_name, err = _decode_and_save_base64_image(
+            image_base64, filename_hint, PROOFS_DIR, "{}_{}".format(today_str, user_id))
+        if err:
+            return _error(err, 400)
 
     # مهم: display باید همین‌جا، پیش از گرفتن _file_lock، محاسبه شود.
     # _user_display خودش از طریق _read_json دوباره _file_lock را می‌گیرد؛
@@ -867,14 +952,21 @@ def challenges_chat_image():
     """پیامِ چتِ عکس‌دار (مجزا از «عکس مدرک»/proof). قبلاً این مسیر اصلاً
     روی سرور تعریف نشده بود، برای همین کلاینت (ChallengeManager.sendChatImage)
     همیشه خطای شبکه می‌گرفت. پاسخ دقیقاً هم‌شکلِ endpoint چتِ متنی است:
-    {"status","data":{...ChatMessage به‌همراه فیلدِ "imageUrl"}}."""
-    user_id = request.form.get("userId")
+    {"status","data":{...ChatMessage به‌همراه فیلدِ "imageUrl"}}.
+
+    ⚠️ عمداً JSON (نه multipart/form-data) — به دلیلِ توضیحِ بالای
+    _decode_and_save_base64_image (پروکسیِ گوگل‌اسکریپت باندریِ multipart
+    را گم می‌کرد و این endpoint هم با «ارسال ناموفق» شکست می‌خورد)."""
+    body = request.get_json(silent=True) or {}
+    user_id = body.get("userId")
     if not user_id:
         return _error("فیلد userId الزامی است", 400)
 
-    image = request.files.get("image")
-    if not image or not image.filename:
-        return _error("فیلد image الزامی است", 400)
+    image_base64 = body.get("imageBase64")
+    filename_hint = body.get("filename")
+    reply_to_id = body.get("replyToId")
+    if not image_base64:
+        return _error("فیلد imageBase64 الزامی است", 400)
 
     today_str = _today_str()
     now_local = _now_local()
@@ -886,18 +978,18 @@ def challenges_chat_image():
     # اندپوینت‌ها نگه می‌داریم.
     display = _user_display(user_id)
 
-    os.makedirs(CHAT_IMAGES_DIR, exist_ok=True)
-    ext = os.path.splitext(image.filename)[1].lower()
-    if ext not in ALLOWED_IMAGE_EXTENSIONS:
-        ext = ".jpg"
-    safe_name = "{}_{}_{}{}".format(today_str, user_id, uuid.uuid4().hex[:8], ext)
-    image.save(os.path.join(CHAT_IMAGES_DIR, safe_name))
+    safe_name, err = _decode_and_save_base64_image(
+        image_base64, filename_hint, CHAT_IMAGES_DIR,
+        "{}_{}_{}".format(today_str, user_id, uuid.uuid4().hex[:8]))
+    if err:
+        return _error(err, 400)
 
     # آدرس کامل (با دامنه/تونل فعلی) تا کلاینت بتواند مستقیماً عکس را
     # از روی همین فیلد imageUrl لود کند.
     image_url = request.host_url.rstrip("/") + "/api/challenges/chat-image-file/" + safe_name
 
     message = {
+        "id": uuid.uuid4().hex[:12],
         "userId": display["userId"],
         "name": display["name"],
         "initials": display["initials"],
@@ -906,6 +998,7 @@ def challenges_chat_image():
         "time": now_local.strftime("%H:%M"),
         "proof": False,
         "imageUrl": image_url,
+        "reactions": {},
     }
 
     with _file_lock:
@@ -916,6 +1009,9 @@ def challenges_chat_image():
             session = _default_live_session(session_key, today_str)
 
         chat = session.setdefault("chat", [])
+        reply_to = _find_reply_target(chat, reply_to_id)
+        if reply_to:
+            message["replyTo"] = reply_to
         chat.append(message)
         # فقط ۲۰۰ پیام آخر امروز نگه داشته می‌شود (هم‌راستا با چتِ متنی)
         session["chat"] = chat[-200:]
@@ -930,6 +1026,63 @@ def challenges_chat_image_file(filename):
     """سرو کردنِ فایل‌های عکسِ چت که در challenges_chat_image ذخیره شدند،
     تا imageUrl برگشتی واقعاً قابل بارگذاری باشد."""
     return send_from_directory(CHAT_IMAGES_DIR, filename)
+
+
+@challenges_bp.route("/api/challenges/chat-react", methods=["POST"])
+def challenges_chat_react():
+    """ری‌اکشنِ ایموجی روی یک پیامِ چت (مالِ خودِ کاربر یا بقیه، فرقی
+    نمی‌کند). هر کاربر روی هر پیام حداکثر یک ایموجیِ فعال دارد — دوباره
+    زدنِ همان ایموجی آن را برمی‌دارد (toggle)؛ زدنِ ایموجیِ دیگر جایگزینِ
+    قبلی می‌شود (دقیقاً رفتارِ تلگرام/واتس‌اپ، نه انباشتِ چند ری‌اکشن از
+    یک نفر روی یک پیام).
+    body: {"userId","messageId","emoji"} -> data: {"messageId","reactions"}"""
+    body = request.get_json(silent=True) or {}
+    user_id = body.get("userId")
+    message_id = body.get("messageId")
+    emoji = body.get("emoji")
+    if not user_id or not message_id or not emoji:
+        return _error("فیلدهای userId، messageId و emoji الزامی‌اند", 400)
+
+    today_str = _today_str()
+
+    with _file_lock:
+        schedule = _read_json_locked(SCHEDULE_FILE, _default_schedule())
+        session_key = _session_key(schedule, today_str)
+        session = _read_json_locked(LIVE_SESSION_FILE, _default_live_session(session_key, today_str))
+        if session.get("sessionKey") != session_key:
+            session = _default_live_session(session_key, today_str)
+
+        chat = session.setdefault("chat", [])
+        target = next((m for m in chat if m.get("id") == message_id), None)
+        if not target:
+            return _error("پیام موردنظر پیدا نشد (شاید خارج از بازه‌ی امروز است)", 404)
+
+        reactions = target.setdefault("reactions", {})
+        # اول هر ری‌اکشنِ قبلیِ همین کاربر روی همین پیام را (با هر ایموجی)
+        # پاک می‌کنیم — چون هر کاربر فقط یک ری‌اکشنِ فعال در آنِ واحد دارد.
+        had_same = False
+        for existing_emoji in list(reactions.keys()):
+            users = reactions.get(existing_emoji) or []
+            if user_id in users:
+                if existing_emoji == emoji:
+                    had_same = True
+                users.remove(user_id)
+                if users:
+                    reactions[existing_emoji] = users
+                else:
+                    del reactions[existing_emoji]
+
+        if not had_same:
+            reactions.setdefault(emoji, [])
+            if user_id not in reactions[emoji]:
+                reactions[emoji].append(user_id)
+
+        target["reactions"] = reactions
+        _write_json_unlocked(LIVE_SESSION_FILE, session)
+
+        result = {"messageId": message_id, "reactions": reactions}
+
+    return _success(data=result, message="ری‌اکشن ثبت شد")
 
 
 # ================================================================
