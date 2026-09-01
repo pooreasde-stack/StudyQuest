@@ -1,0 +1,26 @@
+[
+  {
+    "userId": "bot_03",
+    "eventId": "daily_study",
+    "minutes": 71,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T07:18:00Z",
+    "receivedAt": "2026-09-01T07:47:51.442298Z"
+  },
+  {
+    "userId": "bot_04",
+    "eventId": "daily_study",
+    "minutes": 79,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T07:29:00Z",
+    "receivedAt": "2026-09-01T07:47:51.442309Z"
+  },
+  {
+    "userId": "bot_15",
+    "eventId": "daily_study",
+    "minutes": 20,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-01T06:24:00Z",
+    "receivedAt": "2026-09-01T07:47:51.442316Z"
+  }
+]
