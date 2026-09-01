@@ -1,6 +1,26 @@
 {
   "sessionKey": "2026-09-01|01:00-23:49|23:49-23:50|23:50-23:51",
   "date": "2026-09-01",
-  "participants": [],
-  "chat": []
+  "participants": [
+    {
+      "userId": "f9adee76-5f26-485c-8e94-220fbf774644",
+      "name": "f9adee76-5f26-485c-8e94-220fbf774644",
+      "initials": "f9",
+      "colorKey": "violet",
+      "confirmed": true,
+      "proofSent": false
+    }
+  ],
+  "chat": [
+    {
+      "id": "44d42a4fa3e2",
+      "userId": "f9adee76-5f26-485c-8e94-220fbf774644",
+      "name": "f9adee76-5f26-485c-8e94-220fbf774644",
+      "initials": "f9",
+      "colorKey": "violet",
+      "text": "سلام",
+      "time": "13:56",
+      "reactions": {}
+    }
+  ]
 }
