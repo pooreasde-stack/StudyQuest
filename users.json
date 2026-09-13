@@ -404,5 +404,19 @@
     "field": "",
     "createdAt": "2026-09-01T07:47:51.440497Z",
     "updatedAt": "2026-09-01T07:47:51.440497Z"
+  },
+  {
+    "userId": "7b31c02e-3876-4630-8fd7-f90e01222800",
+    "firstName": "امیر",
+    "lastName": "امیر",
+    "phoneNumber": "09172987946",
+    "birthDay": 1,
+    "birthMonth": 11,
+    "birthYear": 1388,
+    "gender": "مرد",
+    "educationLevel": "یازدهم",
+    "field": "ریاضی",
+    "updatedAt": "2026-09-13T15:58:38.334162Z",
+    "createdAt": "2026-09-13T15:58:38.334162Z"
   }
 ]
