@@ -1086,5 +1086,45 @@
     "consistencyDays": 0,
     "clientTimestamp": "2026-09-14T08:01:00Z",
     "receivedAt": "2026-09-14T08:01:09.820958Z"
+  },
+  {
+    "userId": "bot_11",
+    "eventId": "daily_study",
+    "minutes": 44,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-14T07:56:00Z",
+    "receivedAt": "2026-09-14T08:32:30.589277Z"
+  },
+  {
+    "userId": "bot_13",
+    "eventId": "daily_study",
+    "minutes": 37,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-14T05:49:00Z",
+    "receivedAt": "2026-09-14T08:32:30.589290Z"
+  },
+  {
+    "userId": "bot_19",
+    "eventId": "daily_study",
+    "minutes": 75,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-14T05:32:00Z",
+    "receivedAt": "2026-09-14T08:32:30.589297Z"
+  },
+  {
+    "userId": "bot_22",
+    "eventId": "daily_study",
+    "minutes": 55,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-14T06:34:00Z",
+    "receivedAt": "2026-09-14T08:32:30.589304Z"
+  },
+  {
+    "userId": "bot_28",
+    "eventId": "daily_study",
+    "minutes": 48,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-14T05:57:00Z",
+    "receivedAt": "2026-09-14T08:32:30.589310Z"
   }
 ]
