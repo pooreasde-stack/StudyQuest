@@ -94,14 +94,13 @@
     "weeklyRecaps": []
   },
   "639d778c-aa2b-4a80-8771-b7cc73a8b505": {
-    "currentStreak": 1,
+    "currentStreak": 0,
     "bestStreak": 1,
     "freezesLeft": 0,
     "weekStart": "2026-09-12",
     "lastWeekRank": null,
     "weeksOnBoardStreak": 0,
     "days": {
-      "2026-08-09": "miss",
       "2026-08-10": "miss",
       "2026-08-11": "miss",
       "2026-08-12": "miss",
@@ -135,9 +134,10 @@
       "2026-09-09": "miss",
       "2026-09-10": "miss",
       "2026-09-11": "miss",
-      "2026-09-12": "frozen"
+      "2026-09-12": "frozen",
+      "2026-09-13": "miss"
     },
-    "lastFinalizedDate": "2026-09-12",
+    "lastFinalizedDate": "2026-09-13",
     "weeklyRecaps": []
   }
 }
