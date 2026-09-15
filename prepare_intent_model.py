@@ -1,32 +1,33 @@
 """
-اسکریپت آمادهسازی مدل embedding چندزبانه برای اپ اندروید StudyQuest.
+اسکریپت آماده‌سازی مدل embedding برای اپ StudyQuest.
 
-نصب پیشنیازها:
-    pip install "optimum[onnxruntime]" onnxruntime onnxruntime-extensions transformers numpy
+مدل پایه: alphaedge-ai/multilingual-e5-small-fas-32768
+(همون E5-small با واژگان بهینه‌شده فارسی — حجم ~۳۴MB، دقت حفظ‌شده)
 
-خروجیها (این ۳ فایل باید به app/src/main/assets/ کپی شوند):
-  - model_int8.onnx          مدل کوانتیزهشده (~۳۰MB)
-  - tokenizer.onnx           توکنایزر بهصورت گراف ONNX
-  - intent_embeddings.json   بردارهای از پیشمحاسبهشده هر intent
+خروجی‌ها (به app/src/main/assets/ کپی شوند):
+  - model_int8.onnx          (~۲۰-۲۵ MB پس از کوانتیزه)
+  - tokenizer.onnx           (~۵ MB)
+  - intent_embeddings.json   (~۱۰۰ KB)
 """
 
 import json
 from pathlib import Path
 import numpy as np
 
-MODEL_ID = "intfloat/multilingual-e5-small"
+# ✅ مدل هرس‌شده فارسی به‌جای E5 خام
+MODEL_ID = "alphaedge-ai/multilingual-e5-small-fas-32768"
 OUT_DIR = Path("onnx_export")
 OUT_DIR.mkdir(exist_ok=True)
 
 
 # ---------------------------------------------------------------
-# مرحله ۱: خروجیگرفتن مدل به ONNX با optimum
+# مرحله ۱: خروجی‌گرفتن مدل به ONNX
 # ---------------------------------------------------------------
 def export_model():
     from optimum.onnxruntime import ORTModelForFeatureExtraction
     from transformers import AutoTokenizer
 
-    print("📥 دانلود و تبدیل مدل به ONNX ...")
+    print(f"📥 دانلود و تبدیل مدل به ONNX: {MODEL_ID}")
     model = ORTModelForFeatureExtraction.from_pretrained(MODEL_ID, export=True)
     model.save_pretrained(OUT_DIR)
 
@@ -36,27 +37,19 @@ def export_model():
 
 
 # ---------------------------------------------------------------
-# مرحله ۲: کوانتیزهسازی int8 بهینهشده برای حفظ دقت
+# مرحله ۲: کوانتیزه‌سازی int8
 # ---------------------------------------------------------------
 def quantize_model():
     from onnxruntime.quantization import quantize_dynamic, QuantType
 
     src = OUT_DIR / "model.onnx"
     dst = OUT_DIR / "model_int8.onnx"
-
-    print("🔧 کوانتیزهسازی int8 با تنظیمات حفظ دقت ...")
+    print("🔧 کوانتیزه‌سازی int8 ...")
 
     quantize_dynamic(
         model_input=str(src),
         model_output=str(dst),
         weight_type=QuantType.QUInt8,
-        # کوانتیزهکردن Gather برای فشردهسازی جدول embedding
-        # (بزرگترین بخش مدل + حفظ دقت چون فقط وزنها فشرده میشن)
-        op_types_to_quantize=["MatMul", "Gather"],
-        extra_options={
-            "ActivationSymmetric": False,   # حفظ دقت بیشتر
-            "WeightSymmetric": True,         # وزنها متقارن (پایدارتر)
-        },
     )
 
     size_mb = dst.stat().st_size / (1024 * 1024)
@@ -65,7 +58,7 @@ def quantize_model():
 
 
 # ---------------------------------------------------------------
-# مرحله ۳: ساخت توکنایزر بهصورت گراف ONNX
+# مرحله ۳: ساخت توکنایزر به‌صورت گراف ONNX
 # ---------------------------------------------------------------
 def export_tokenizer_onnx():
     from transformers import AutoTokenizer
@@ -75,12 +68,12 @@ def export_tokenizer_onnx():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
     # ورودی باید خودِ توکنایزر باشد، نه مسیر پوشه
-    pre_model = gen_processing_models(
+    # (خطای KeyError: 'onnx_export' قبلاً از همین اشتباه می‌آمد)
+    result = gen_processing_models(
         tokenizer,
         pre_kwargs={"WITH_DEFAULT_INPUTS": True},
     )
-    if isinstance(pre_model, tuple):
-        pre_model = pre_model[0]
+    pre_model = result[0] if isinstance(result, tuple) else result
 
     tok_path = OUT_DIR / "tokenizer.onnx"
     with open(tok_path, "wb") as f:
@@ -90,7 +83,7 @@ def export_tokenizer_onnx():
 
 
 # ---------------------------------------------------------------
-# مرحله ۴: محاسبهی embedding جملههای نمونه هر intent
+# مرحله ۴: محاسبه‌ی embedding جمله‌های نمونه هر intent
 # ---------------------------------------------------------------
 def build_intent_embeddings():
     import onnxruntime as ort
@@ -99,8 +92,11 @@ def build_intent_embeddings():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
     session = ort.InferenceSession(str(OUT_DIR / "model_int8.onnx"))
 
+    # ✅ کشف ورودی‌های لازم مدل — یک‌بار در بیرون از حلقه
+    required_inputs = {i.name for i in session.get_inputs()}
+    print(f"ℹ️ ورودی‌های مدل: {sorted(required_inputs)}")
+
     def embed(text: str) -> np.ndarray:
-        # E5 با پیشوند "query: " برای ورودی کاربر
         inputs = tokenizer(
             "query: " + text,
             return_tensors="np",
@@ -108,12 +104,15 @@ def build_intent_embeddings():
             truncation=True,
             max_length=128,
         )
-        outputs = session.run(None, dict(inputs))
-        last_hidden = outputs[0]
-        mask = inputs["attention_mask"][..., None]
-        pooled = (last_hidden * mask).sum(1) / mask.sum(1)
+        # ✅ فیکس token_type_ids: فقط ورودی‌هایی که مدل می‌خواهد را پاس بده
+        feed = {k: v for k, v in inputs.items() if k in required_inputs}
+
+        outputs = session.run(None, feed)
+        last_hidden = outputs[0]                            # (1, seq_len, 384)
+        mask = inputs["attention_mask"][..., None]          # (1, seq_len, 1)
+        pooled = (last_hidden * mask).sum(1) / mask.sum(1)  # mean pooling
         vec = pooled[0]
-        return vec / np.linalg.norm(vec)
+        return vec / np.linalg.norm(vec)                    # نرمال‌سازی کسینوسی
 
     with open("intents.json", encoding="utf-8") as f:
         intents = json.load(f)
@@ -129,6 +128,9 @@ def build_intent_embeddings():
     print(f"✅ embeddingها ساخته شد → {out_path}")
 
 
+# ---------------------------------------------------------------
+# اجرا
+# ---------------------------------------------------------------
 if __name__ == "__main__":
     export_model()
     size_mb = quantize_model()
@@ -137,8 +139,8 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 50)
     print(f"حجم مدل نهایی: {size_mb:.1f} MB")
-    if size_mb < 100:
-        print("✅ زیر سقف ۱۰۰MB گیتهاب — بدون نیاز به Git LFS")
+    if size_mb < 95:
+        print("✅ زیر سقف ۱۰۰MB — بدون نیاز به Git LFS")
     else:
-        print("⚠️ بالای ۱۰۰MB — Git LFS لازم است")
+        print("⚠️ بالای ۹۵MB — Git LFS لازم است")
     print("=" * 50)
