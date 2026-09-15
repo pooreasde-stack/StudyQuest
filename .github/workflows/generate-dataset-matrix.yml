@@ -8,10 +8,10 @@ on:
         default: '20'
       model:
         description: 'مدل Ollama'
-        default: 'qwen2.5:7b'
+        default: 'qwen2.5:14b'
       time_budget_min:
         description: 'بودجه‌ی زمانی هر shard (دقیقه)'
-        default: '280'
+        default: '340'
       intents_per_round:
         description: 'تعداد intent در هر دور'
         default: '40'
@@ -26,22 +26,18 @@ jobs:
       - name: محاسبه نسخه و لیست shardها
         id: ver
         run: |
-          # نسخه = شماره‌ی run + شماره‌ی تلاش (برای اطمینان از یکتایی)
           VERSION="v${{ github.run_number }}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "📌 نسخه‌ی این اجرا: $VERSION"
-
-          # لیست shardها به‌صورت JSON array
           N=${{ github.event.inputs.shards }}
           SHARDS=$(python3 -c "import json; print(json.dumps(list(range($N))))")
           echo "shard_list=$SHARDS" >> $GITHUB_OUTPUT
           echo "📦 تعداد shardها: $N"
-          echo "🔢 لیست: $SHARDS"
 
   generate-shard:
     needs: prepare
     runs-on: ubuntu-latest
-    timeout-minutes: 340
+    timeout-minutes: 355
     strategy:
       fail-fast: false
       max-parallel: 20
@@ -83,13 +79,13 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: python scripts/generate_shard.py
 
-      - name: آپلود آرتیفکت shard ${{ matrix.shard }} (نسخه‌دار)
+      - name: آپلود آرتیفکت shard (نسخه‌دار)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: intent-shard-${{ needs.prepare.outputs.version }}-${{ matrix.shard }}
           path: output/
-          retention-days: 30
+          retention-days: 90
           if-no-files-found: warn
 
   merge:
@@ -114,9 +110,7 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           SHARDS: ${{ github.event.inputs.shards }}
-        run: |
-          pip install requests
-          python scripts/merge_shards.py
+        run: python scripts/merge_shards.py
 
       - name: آپلود دیتاست نهایی (نسخه‌دار)
         uses: actions/upload-artifact@v4
@@ -131,5 +125,7 @@ jobs:
           echo "## 📊 نسخه‌ی ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ -f /tmp/merged/stats.json ]; then
+            echo '```json' >> $GITHUB_STEP_SUMMARY
             cat /tmp/merged/stats.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
           fi
