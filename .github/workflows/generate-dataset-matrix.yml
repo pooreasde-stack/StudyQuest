@@ -1,4 +1,4 @@
-name: Generate Intent Dataset (Matrix + Versioned)
+name: Generate Intent Dataset (Matrix + Cached Model + Persistent State)
 
 on:
   workflow_dispatch:
@@ -17,12 +17,18 @@ on:
         default: '40'
 
 jobs:
+  # ═══════════════════════════════════════════════════════════════════════
+  # job 1: آماده‌سازی — نسخه + لیست shardها + دانلود مدل (یک‌بار برای همه)
+  # ═══════════════════════════════════════════════════════════════════════
   prepare:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
       shard_list: ${{ steps.ver.outputs.shard_list }}
+      model_cached: ${{ steps.model_cache.outputs.cache-hit }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: محاسبه نسخه و لیست shardها
         id: ver
         run: |
@@ -34,6 +40,47 @@ jobs:
           echo "shard_list=$SHARDS" >> $GITHUB_OUTPUT
           echo "📦 تعداد shardها: $N"
 
+      # ═══════════════════════════════════════════════════════════════════
+      # دانلود یک‌باره‌ی مدل در این job + ذخیره در cache
+      # بقیه shardها فقط از cache می‌خوانند (نه دانلود از ollama.com)
+      # ═══════════════════════════════════════════════════════════════════
+      - name: Cache مدل Ollama
+        id: model_cache
+        uses: actions/cache@v4
+        with:
+          path: ollama_models
+          key: ollama-model-${{ github.event.inputs.model }}-v1
+
+      - name: نصب Ollama (فقط برای پر کردن cache)
+        if: steps.model_cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y zstd
+          curl -fsSL -o ollama.tar.zst \
+            https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64.tar.zst
+          sudo tar --zstd -C /usr -xf ollama.tar.zst
+          rm -f ollama.tar.zst
+          ollama --version
+
+      - name: دانلود مدل به cache (فقط اگر cache خالی بود)
+        if: steps.model_cache.outputs.cache-hit != 'true'
+        env:
+          MODEL: ${{ github.event.inputs.model }}
+        run: |
+          # OLLAMA_MODELS تعیین می‌کند مدل‌ها کجا ذخیره شوند
+          export OLLAMA_MODELS="$PWD/ollama_models"
+          mkdir -p "$OLLAMA_MODELS"
+          ollama serve > /tmp/ollama.log 2>&1 &
+          sleep 10
+          echo "📥 دانلود مدل $MODEL (فقط یک‌بار)..."
+          ollama pull "$MODEL"
+          echo "✅ مدل $MODEL دانلود شد به $OLLAMA_MODELS"
+          du -sh "$OLLAMA_MODELS"
+          # متوقف کردن سرویس
+          pkill ollama || true
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # job 2: هر shard از cache مدل می‌خواند و state قبلی را از مخزن می‌گیرد
+  # ═══════════════════════════════════════════════════════════════════════
   generate-shard:
     needs: prepare
     runs-on: ubuntu-latest
@@ -60,14 +107,54 @@ jobs:
           rm -f ollama.tar.zst
           ollama --version
 
-      - name: راه‌اندازی Ollama و دانلود مدل
+      # ═══════════════════════════════════════════════════════════════════
+      # بازیابی مدل از cache (بدون دانلود از ollama.com)
+      # ═══════════════════════════════════════════════════════════════════
+      - name: بازیابی مدل از cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ollama_models
+          key: ollama-model-${{ github.event.inputs.model }}-v1
+          fail-on-cache-miss: true    # اگر cache نبود، خطا بده
+
+      - name: راه‌اندازی Ollama با مدل cache-شده
         run: |
+          export OLLAMA_MODELS="$PWD/ollama_models"
           ollama serve > /tmp/ollama.log 2>&1 &
           sleep 10
-          ollama pull ${{ github.event.inputs.model }}
+          # تأیید اینکه مدل در دسترس است
+          ollama list
+          echo "✅ مدل ${{ github.event.inputs.model }} از cache بارگذاری شد"
 
       - name: نصب وابستگی‌های پایتون
         run: pip install requests
+
+      # ═══════════════════════════════════════════════════════════════════
+      # بازیابی state قبلی این shard از مخزن (اگر وجود داشت)
+      # ═══════════════════════════════════════════════════════════════════
+      - name: بازیابی state قبلی از مخزن
+        run: |
+          mkdir -p output
+          STATE_FILE="dataset_state/shard_${{ matrix.shard }}.json"
+          META_FILE="dataset_state/shard_${{ matrix.shard }}_meta.json"
+          DISCOVERED_FILE="dataset_state/shard_${{ matrix.shard }}_domains.json"
+
+          if [ -f "$STATE_FILE" ]; then
+            cp "$STATE_FILE" output/shard_${{ matrix.shard }}.json
+            echo "♻️ state قبلی shard ${{ matrix.shard }} بازیابی شد"
+            echo "   تعداد intent: $(python3 -c "import json; print(len(json.load(open('output/shard_${{ matrix.shard }}.json'))))")"
+          else
+            echo "🆕 shard ${{ matrix.shard }} برای اولین‌بار اجرا می‌شود"
+          fi
+
+          if [ -f "$META_FILE" ]; then
+            cp "$META_FILE" output/checkpoint.json
+            echo "♻️ checkpoint بازیابی شد"
+          fi
+
+          if [ -f "$DISCOVERED_FILE" ]; then
+            cp "$DISCOVERED_FILE" output/discovered_domains.json
+          fi
 
       - name: اجرای shard ${{ matrix.shard }}
         env:
@@ -77,6 +164,7 @@ jobs:
           TIME_BUDGET_MIN: ${{ github.event.inputs.time_budget_min }}
           INTENTS_PER_ROUND: ${{ github.event.inputs.intents_per_round }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          OLLAMA_MODELS: ${{ github.workspace }}/ollama_models
         run: python scripts/generate_shard.py
 
       - name: آپلود آرتیفکت shard (نسخه‌دار)
@@ -88,6 +176,9 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
+  # ═══════════════════════════════════════════════════════════════════════
+  # job 3: ادغام همه‌ی shardها در دیتاست نهایی
+  # ═══════════════════════════════════════════════════════════════════════
   merge:
     needs: [prepare, generate-shard]
     if: always()
@@ -129,3 +220,86 @@ jobs:
             cat /tmp/merged/stats.json >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
+
+  # ═══════════════════════════════════════════════════════════════════════
+  # job 4: ذخیره‌ی state همه‌ی shardها در مخزن برای اجرای بعدی
+  # ═══════════════════════════════════════════════════════════════════════
+  save-state:
+    needs: [prepare, generate-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: دانلود آرتیفکت‌های shardها
+        uses: actions/download-artifact@v4
+        with:
+          pattern: intent-shard-${{ needs.prepare.outputs.version }}-*
+          path: /tmp/shards
+
+      - name: کپی stateها به پوشه‌ی dataset_state
+        run: |
+          mkdir -p dataset_state
+          for shard_dir in /tmp/shards/intent-shard-*; do
+            [ -d "$shard_dir" ] || continue
+            # نام پوشه: intent-shard-v42-5
+            basename=$(basename "$shard_dir")
+            shard_num="${basename##*-}"
+            echo "📥 shard $shard_num"
+
+            # فایل اصلی state
+            if [ -f "$shard_dir/shard_${shard_num}.json" ]; then
+              cp "$shard_dir/shard_${shard_num}.json" "dataset_state/shard_${shard_num}.json"
+              INTENTS=$(python3 -c "import json; print(len(json.load(open('dataset_state/shard_${shard_num}.json'))))" 2>/dev/null || echo 0)
+              echo "   ✅ $INTENTS intent ذخیره شد"
+            fi
+
+            # checkpoint (متادیتای اجرا)
+            if [ -f "$shard_dir/checkpoint.json" ]; then
+              cp "$shard_dir/checkpoint.json" "dataset_state/shard_${shard_num}_meta.json"
+            fi
+
+            # discovered domains
+            if [ -f "$shard_dir/discovered_domains.json" ]; then
+              cp "$shard_dir/discovered_domains.json" "dataset_state/shard_${shard_num}_domains.json"
+            fi
+
+            # shard_meta
+            if [ -f "$shard_dir/shard_meta.json" ]; then
+              cp "$shard_dir/shard_meta.json" "dataset_state/shard_${shard_num}_shard_meta.json"
+            fi
+          done
+
+          echo "📊 محتوای dataset_state:"
+          ls -la dataset_state/ | head -30
+
+      - name: Commit و Push state به مخزن
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add -f dataset_state/
+
+          if git diff --cached --quiet; then
+            echo "ℹ️ چیزی برای commit نیست"
+            exit 0
+          fi
+
+          git commit -m "dataset state update (run ${{ github.run_id }} / ${{ needs.prepare.outputs.version }})"
+
+          # تلاش برای push با rebase (برای جلوگیری از تداخل)
+          for attempt in $(seq 1 10); do
+            git pull --rebase || true
+            if git push; then
+              echo "✅ state به مخزن push شد"
+              exit 0
+            fi
+            echo "⚠️ تلاش $attempt ناموفق — ۵ ثانیه صبر..."
+            sleep 5
+          done
+
+          echo "❌ push پس از ۱۰ تلاش ناموفق"
+          exit 1
