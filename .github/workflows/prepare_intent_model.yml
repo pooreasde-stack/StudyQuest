@@ -12,7 +12,7 @@ jobs:
     if: github.actor != 'github-actions[bot]'
 
     steps:
-      - name: چکاوت مخزن
+      - name: چک‌اوت مخزن
         uses: actions/checkout@v4
 
       - name: نصب پایتون
@@ -28,7 +28,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: نصب پیشنیازها
+      - name: نصب پیش‌نیازها
         run: |
           python -m pip install --upgrade pip
           pip install "optimum[onnxruntime]" onnxruntime transformers numpy
@@ -36,12 +36,14 @@ jobs:
       - name: اجرای اسکریپت
         run: python prepare_intent_model.py
 
-      - name: بررسی حجم
+      - name: بررسی حجم خروجی‌ها
         run: |
-          echo "### حجم فایلها" >> $GITHUB_STEP_SUMMARY
-          du -h onnx_export/model_int8.onnx onnx_export/tokenizer_hf/tokenizer.json onnx_export/intent_embeddings.json >> $GITHUB_STEP_SUMMARY
+          echo "### حجم فایل‌های تولیدشده" >> $GITHUB_STEP_SUMMARY
+          du -h onnx_export/model_int8.onnx >> $GITHUB_STEP_SUMMARY
+          du -h onnx_export/tokenizer.json >> $GITHUB_STEP_SUMMARY
+          du -h onnx_export/intent_embeddings.json >> $GITHUB_STEP_SUMMARY
 
-      - name: کپی به assets اندروید
+      - name: کپی خروجی‌ها به assets اندروید (اگر وجود دارد)
         run: |
           if [ -d "app/src/main/assets" ]; then
             cp onnx_export/model_int8.onnx app/src/main/assets/
@@ -49,6 +51,8 @@ jobs:
             mkdir -p app/src/main/assets/tokenizer_hf
             cp onnx_export/tokenizer_hf/* app/src/main/assets/tokenizer_hf/
             echo "✅ کپی شد به app/src/main/assets/"
+          else
+            echo "ℹ️ پوشه app/src/main/assets پیدا نشد — فایل‌ها فقط در onnx_export/ می‌مانند."
           fi
 
       - name: کامیت و پوش
@@ -56,7 +60,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add onnx_export/
+          # ✅ فقط فایل‌های نهایی — model.onnx (FP32) هرگز اضافه نمی‌شود
+          git add onnx_export/model_int8.onnx
+          git add onnx_export/intent_embeddings.json
+          git add onnx_export/tokenizer.json
+          git add onnx_export/tokenizer_config.json
+          git add onnx_export/special_tokens_map.json
+          git add onnx_export/config.json
+          git add onnx_export/tokenizer_hf/
+
           if [ -d "app/src/main/assets" ]; then
             git add app/src/main/assets/
           fi
@@ -69,8 +81,13 @@ jobs:
           git commit -m "chore: rebuild intent model [skip ci]"
 
           for attempt in 1 2 3; do
-            if git push; then exit 0; fi
+            if git push; then
+              echo "✅ پوش موفق (تلاش $attempt)"
+              exit 0
+            fi
+            echo "⚠️ تلاش $attempt ناموفق — rebase و تلاش مجدد..."
             git pull --rebase origin main || true
             sleep $((RANDOM % 4 + 2))
           done
+          echo "❌ پوش بعد از ۳ تلاش ناموفق بود."
           exit 1
