@@ -1350,5 +1350,53 @@
     "consistencyDays": 0,
     "clientTimestamp": "2026-09-14T17:27:00Z",
     "receivedAt": "2026-09-14T17:27:27.292335Z"
+  },
+  {
+    "userId": "bot_05",
+    "eventId": "daily_study",
+    "minutes": 78,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T06:23:00Z",
+    "receivedAt": "2026-09-15T08:21:30.381097Z"
+  },
+  {
+    "userId": "bot_11",
+    "eventId": "daily_study",
+    "minutes": 40,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T04:24:00Z",
+    "receivedAt": "2026-09-15T08:21:30.381109Z"
+  },
+  {
+    "userId": "bot_12",
+    "eventId": "daily_study",
+    "minutes": 67,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T05:24:00Z",
+    "receivedAt": "2026-09-15T08:21:30.381115Z"
+  },
+  {
+    "userId": "bot_16",
+    "eventId": "daily_study",
+    "minutes": 36,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T08:16:00Z",
+    "receivedAt": "2026-09-15T08:21:30.381121Z"
+  },
+  {
+    "userId": "bot_21",
+    "eventId": "daily_study",
+    "minutes": 18,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T07:46:00Z",
+    "receivedAt": "2026-09-15T08:21:30.381126Z"
+  },
+  {
+    "userId": "bot_25",
+    "eventId": "daily_study",
+    "minutes": 35,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T05:46:00Z",
+    "receivedAt": "2026-09-15T08:21:30.381131Z"
   }
 ]
