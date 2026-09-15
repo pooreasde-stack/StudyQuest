@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-تولید دیتاست intent با ذخیره‌سازی state در output/ (که ورک‌فلو آن را به
-dataset_state/ در مخزن منتقل می‌کند).
+تولید دیتاست intent با ذخیره‌سازی state در output/ و استفاده از
+format=json در Ollama برای اجبار به خروجی JSON معتبر.
 
 سه حالت کاری:
   1. from_hints      → ساخت intent از حوزه‌های راهنما
@@ -27,7 +27,7 @@ MODEL = os.environ.get("MODEL", "qwen2.5:14b")
 SHARD_ID = int(os.environ.get("SHARD_ID", "0"))
 TOTAL_SHARDS = int(os.environ.get("TOTAL_SHARDS", "1"))
 TIME_BUDGET_MIN = int(os.environ.get("TIME_BUDGET_MIN", "340"))
-INTENTS_PER_ROUND = int(os.environ.get("INTENTS_PER_ROUND", "40"))
+INTENTS_PER_ROUND = int(os.environ.get("INTENTS_PER_ROUND", "20"))
 VERSION = os.environ.get("VERSION", "v0")
 
 OUTPUT_DIR = Path("output")
@@ -43,10 +43,8 @@ LOG_FILE = OUTPUT_DIR / "generation_log.txt"
 # حوزه‌های راهنما (اولیه)
 # ═══════════════════════════════════════════════════════════════════════════
 DOMAIN_HINTS = [
-    # مکالمات پایه
     "سلام و احوال‌پرسی", "خداحافظی و پایان مکالمه", "تشکر و قدردانی",
     "معرفی خود (اسم، سن، شهر، جنسیت)", "سوالات هویتی و شخصی",
-    # تحصیل
     "هدف تحصیلی (کنکور، نهایی، دانشگاه، رتبه)", "امتحان و آزمون",
     "تکلیف و پروژه", "نمره و کارنامه", "مدرسه و آموزشگاه",
     "کلاس و معلم", "مشاوره‌ی تحصیلی", "انتخاب رشته",
@@ -54,56 +52,39 @@ DOMAIN_HINTS = [
     "درس‌های عمومی", "درس‌های تخصصی",
     "ریاضی و فرمول", "فیزیک", "شیمی", "زیست", "ادبیات", "عربی", "دینی",
     "زبان انگلیسی", "تاریخ", "جغرافیا", "اقتصاد", "فلسفه", "منطق",
-    # برنامه‌ریزی
     "برنامه‌ریزی روزانه", "برنامه‌ریزی هفتگی", "برنامه‌ریزی ماهانه",
     "درخواست تغییر برنامه", "لغو برنامه", "به تعویق انداختن",
     "پومودورو و تکنیک مطالعه", "تست‌زنی", "یادگیری فعال",
     "خلاصه‌نویسی", "فلش‌کارت", "حل تمرین",
     "محل مطالعه", "حواس‌پرتی", "تمرکز", "گوشی موبایل",
-    # خواب و زمان
     "ساعت بیداری", "ساعت خواب", "کم‌خوابی", "بی‌خوابی",
     "خواب آلودگی", "چرت روزانه", "ساعت مطالعه", "زمان‌بندی",
     "وعده‌های غذایی", "صبحانه", "ناهار", "شام", "میان‌وعده",
-    # احساسات
     "خستگی", "انگیزه", "بی‌انگیزگی", "استرس", "اضطراب",
     "شادی و هیجان", "غم و افسردگی", "خشم", "ترس", "تنهایی",
     "اعتماد به نفس", "خودشناسی", "خودآگاهی", "هدف‌گذاری",
     "امید به آینده", "پشیمانی و حسرت", "خاطرات گذشته",
-    # بازخورد به ربات
     "بازخورد به ربات", "امتیاز دادن", "انتقاد از ربات",
     "سوالات متداول درباره ربات", "دستورات حالت زنده",
     "توقف و ادامه", "پرش به مرحله‌ی بعدی",
-    # شکایت
     "اعتراض به برنامه", "شکایت از ربات", "گله‌مندی",
     "دعوا و بحث (بدون فحش)", "نارضایتی",
-    # درخواست‌ها
     "درخواست کمک روانی", "درخواست استراحت", "درخواست مرخصی",
     "درخواست شخصی‌سازی", "پیشنهاد به ربات",
-    # روابط
     "رابطه با دوستان", "رابطه با خانواده", "رابطه با معلم",
     "عشق و شکست عشقی", "قلدری و آزار", "رقابت با دوستان",
-    # سرگرمی
     "بازی‌های ویدیویی", "شبکه‌های اجتماعی", "یوتیوب و پادکست",
     "کتاب و رمان", "موزیک و ساز", "نقاشی و طراحی", "عکاسی",
     "سفر و گردش", "طبیعت‌گردی", "آشپزی", "مد و پوشاک",
-    # سلامت
     "سلامت جسمی", "سردرد", "کمردرد", "بیماری",
     "سلامت روانی", "افسردگی", "بی‌حوصلگی", "ناامیدی",
-    # مالی و کار
     "خرید و بودجه", "پول توجیبی", "کار و درآمد", "کمک به خانواده",
-    "مشکلات مالی",
-    # معنویت
-    "دین و معنویت", "دعا و نیایش", "سوالات متافیزیکی",
-    # تصمیم‌گیری
+    "مشکلات مالی", "دین و معنویت", "دعا و نیایش", "سوالات متافیزیکی",
     "تردید و شک", "بی‌تصمیمی", "مقایسه", "انتخاب بین گزینه‌ها",
-    # طنز و انگیزه
     "شوخی و طنز", "لطیفه", "دلگرمی و تشویق",
-    # عمیق
     "سوالات فلسفی", "سوالات وجودی", "معنای زندگی",
-    # رویدادها
     "تولد و جشن", "عزاداری و سوگ", "مرگ عزیزان",
     "تعطیلات و تفریح", "مسافرت",
-    # متنوع
     "مقایسه‌ی دانشگاه‌ها", "شهریه و هزینه", "خوابگاه",
     "دور بودن از خانواده", "مهاجرت", "آینده‌ی شغلی",
     "غلبه بر ترس", "کنترل خشم", "بخشش", "شکرگزاری",
@@ -121,7 +102,7 @@ PROMPT_FROM_HINTS = """# نقش
 تو متخصص NLU هستی و برای ربات StudyQuest دیتاست intent می‌سازی.
 
 # وظیفه
-دقیقاً {n_intents} intent از حوزه‌های زیر بساز. هر intent: ۱۵ تا ۲۰ نمونه.
+دقیقاً {n_intents} intent از حوزه‌های زیر بساز. هر intent: ۱۰ تا ۱۵ نمونه.
 
 # حوزه‌ها
 {hint_domains}
@@ -136,11 +117,11 @@ PROMPT_FROM_HINTS = """# نقش
 - ارقام: «۱۰»/«10»/«ده»/«۱۰:۳۰»
 - مترادف‌ها: پا می‌شم، بلند می‌شم، از خواب درمیام
 - ساختار: مثبت/منفی/سوالی/شرطی/با توضیح
-- محاوره: «آره خب»، «خب معلومه»، «چرا که نه»، «حالا کی حوصله داره»
+- محاوره: «آره خب»، «خب معلومه»، «چرا که نه»
 
 # ممنوع
 ❌ تکرار با تغییر یک کلمه
-❌ جملات کتابی («من ساعت ۱۰ بیدار می‌شوم»)
+❌ جملات کتابی
 ❌ بیش از ۱۵ کلمه
 ❌ فحش و رکیک
 
@@ -148,8 +129,7 @@ PROMPT_FROM_HINTS = """# نقش
 {existing_sample}
 
 # خروجی
-فقط JSON خالص بدون markdown، بدون توضیح:
-{{"intent_name_1": ["جمله ۱", "جمله ۲", ...], "intent_name_2": [...]}}"""
+فقط JSON خالص بدون markdown، بدون توضیح."""
 
 PROMPT_DISCOVER_DOMAINS = """# نقش
 تو متخصص NLU هستی و برای ربات StudyQuest حوزه‌های جدید کشف می‌کنی.
@@ -161,14 +141,13 @@ PROMPT_DISCOVER_DOMAINS = """# نقش
 - هر حوزه با حوزه‌های موجود کاملاً متفاوت باشد
 - مرتبط با ربات برنامه‌ریز درسی فارسی
 - به جنبه‌های پنهان/احساسی/فرهنگی فکر کن
-- خلاق باش — حوزه‌های غیرمنتظره بساز
+- خلاق باش
 
 # حوزه‌های موجود (تکرار نکن)
 {existing_domains}
 
 # خروجی
-فقط JSON خالص:
-{{"new_domains": ["حوزه‌ی جدید ۱", "حوزه‌ی جدید ۲", ...]}}"""
+فقط JSON خالص: {{"new_domains": ["حوزه‌ی جدید ۱", "حوزه‌ی جدید ۲"]}}"""
 
 PROMPT_ENHANCE = """# نقش
 تو متخصص NLU هستی.
@@ -192,8 +171,8 @@ intentهای زیر کم‌نمونه هستند. برای هرکدام:
 # خروجی
 فقط JSON خالص:
 {{
-  "new_samples_for_existing": {{"intent_name_1": [...], ...}},
-  "new_related_intents": {{"new_intent_name": [...], ...}}
+  "new_samples_for_existing": {{"intent_name_1": ["...", "..."]}},
+  "new_related_intents": {{"new_intent_name": ["...", "..."]}}
 }}"""
 
 
@@ -211,16 +190,17 @@ def log(msg):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# فراخوانی Ollama
+# فراخوانی Ollama با format=json (اجبار به JSON معتبر)
 # ═══════════════════════════════════════════════════════════════════════════
-def call_ollama(prompt, max_tokens=8000, timeout=1200):
+def call_ollama(prompt, max_tokens=4000, timeout=1200):
     payload = {
         "model": MODEL,
         "prompt": prompt,
         "stream": False,
+        "format": "json",           # ← کلید اصلی: اجبار به JSON معتبر
         "options": {
             "num_predict": max_tokens,
-            "temperature": 0.95,
+            "temperature": 0.9,
             "top_p": 0.95,
             "top_k": 80,
             "repeat_penalty": 1.15,
@@ -231,22 +211,72 @@ def call_ollama(prompt, max_tokens=8000, timeout=1200):
     return resp.json().get("response", "")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# استخراج JSON مقاوم
+# ═══════════════════════════════════════════════════════════════════════════
 def extract_json(text):
-    """استخراج JSON از پاسخ مدل، حتی اگر markdown یا متن اضافه داشته باشد."""
+    """
+    استخراج JSON از پاسخ مدل با تحمل خطاهای رایج:
+    1. markdown code fences
+    2. متن اضافه قبل/بعد
+    3. رشته‌های شکسته با newline خام (بدون escape)
+    4. JSON ناقص (استخراج intentهای کامل)
+    """
     if not text:
         return None
+
+    # ۱. حذف markdown fences
     m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if m:
         text = m.group(1)
+
+    # ۲. پیدا کردن محدوده‌ی { ... }
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end <= start:
         return None
+
     candidate = text[start:end + 1]
+
+    # تلاش اول: JSON خام
     try:
         return json.loads(candidate)
     except json.JSONDecodeError:
+        pass
+
+    # تلاش دوم: ترمیم newlineهای escape‌نشده داخل رشته‌ها
+    fixed = re.sub(r'(?<!\\)\n(?=[^"]*")', '\\\\n', candidate)
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+
+    # تلاش سوم: استخراج intentهای کامل از JSON ناقص
+    repaired = _repair_truncated_json(candidate)
+    if repaired:
+        return repaired
+
+    return None
+
+
+def _repair_truncated_json(text):
+    """اگر JSON ناقص باشد، intentهای کامل را استخراج می‌کند."""
+    pattern = r'"([a-z][a-z0-9_]*)"\s*:\s*\[((?:[^\[\]]|\[[^\]]*\])*?)\]'
+    matches = re.findall(pattern, text)
+    if not matches:
         return None
+    result = {}
+    for key, samples_str in matches:
+        try:
+            samples = json.loads(f"[{samples_str}]")
+            if isinstance(samples, list) and len(samples) >= 3:
+                result[key] = [s for s in samples if isinstance(s, str) and s.strip()]
+        except json.JSONDecodeError:
+            inner = samples_str.strip().strip(",")
+            parts = re.findall(r'"([^"]+)"', inner)
+            if len(parts) >= 3:
+                result[key] = parts
+    return result if result else None
 
 
 def clean_intents_dict(data):
@@ -278,7 +308,6 @@ def load_state():
         "mode_history": [],
     }
 
-    # دیتاست از shard_N.json
     if SHARD_FILE.exists():
         try:
             data = json.loads(SHARD_FILE.read_text(encoding="utf-8"))
@@ -288,7 +317,6 @@ def load_state():
         except Exception as e:
             log(f"⚠️ خطا در خواندن دیتاست: {e}")
 
-    # متادیتا از checkpoint.json
     if CHECKPOINT_FILE.exists():
         try:
             meta = json.loads(CHECKPOINT_FILE.read_text(encoding="utf-8"))
@@ -301,7 +329,6 @@ def load_state():
         except Exception as e:
             log(f"⚠️ خطا در خواندن checkpoint: {e}")
 
-    # حوزه‌های کشف‌شده از فایل جداگانه
     if DISCOVERED_DOMAINS_FILE.exists():
         try:
             dd = json.loads(DISCOVERED_DOMAINS_FILE.read_text(encoding="utf-8"))
@@ -318,13 +345,11 @@ def load_state():
 
 def save_state(state):
     """ذخیره state در output/ (ورک‌فلو بعداً آن را به dataset_state/ می‌برد)."""
-    # دیتاست اصلی
     SHARD_FILE.write_text(
         json.dumps(state["dataset"], ensure_ascii=False, indent=2),
         encoding="utf-8"
     )
 
-    # checkpoint (متادیتا)
     meta = {
         "iteration": state.get("iteration", 0),
         "domains_used": state.get("domains_used", []),
@@ -341,7 +366,6 @@ def save_state(state):
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    # فایل کشف‌شده‌ها
     DISCOVERED_DOMAINS_FILE.write_text(
         json.dumps({
             "discovered": state.get("discovered_domains", []),
@@ -349,7 +373,6 @@ def save_state(state):
         }, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    # shard_meta برای گزارش‌دهی
     shard_meta = {
         "shard_id": SHARD_ID,
         "total_shards": TOTAL_SHARDS,
@@ -416,7 +439,6 @@ def apply_hints_result(state, parsed, domains):
             state["dataset"][intent] = samples[:20]
             new_count += 1
     state["domains_used"].extend(domains or [])
-    # ریست لیست اگر خیلی بزرگ شد
     if len(state["domains_used"]) > 500:
         state["domains_used"] = state["domains_used"][-300:]
     return new_count, merged_count
@@ -465,7 +487,6 @@ def apply_enhance_result(state, parsed):
 # انتخاب حالت و ساخت پرامپت
 # ═══════════════════════════════════════════════════════════════════════════
 def choose_mode_and_prompt(state):
-    """انتخاب حالت بر اساس state فعلی."""
     # ۱. راهنماهای اولیه
     domains = pick_domains_from_hints(state["domains_used"], count=6)
     if domains:
@@ -500,7 +521,6 @@ def choose_mode_and_prompt(state):
 
 
 def build_enhance_prompt(state):
-    """ساخت پرامپت enhance برای intentهای کم‌نمونه."""
     weak = pick_weak_intents(state["dataset"], count=8)
     if not weak:
         return None
@@ -539,16 +559,9 @@ def main():
         log(f"🔁 iter {iteration} | intents: {len(state['dataset'])} | "
             f"left: {remaining_min:.1f}m")
 
-        # انتخاب حالت
         mode, prompt, metadata = choose_mode_and_prompt(state)
+        log(f"   🎯 mode: {mode}")
 
-        # اگر حالت discover بود ولی هیچ حوزه‌ی جدیدی نبود، مستقیم برو enhance
-        if mode == "discover_domains":
-            log(f"   🎯 mode: discover_domains")
-        else:
-            log(f"   🎯 mode: {mode}")
-
-        # فراخوانی مدل
         try:
             t0 = time.time()
             timeout_sec = min(1200, max(60, int(deadline - time.time()) - 30))
@@ -581,7 +594,7 @@ def main():
                 break
             continue
 
-        # اعمال نتیجه بر اساس حالت
+        # اعمال نتیجه
         if mode in ("from_hints", "discovered_hints"):
             n_new, n_merged = apply_hints_result(state, parsed, metadata)
             log(f"   ✅ +{n_new} intent جدید | +{n_merged} ادغام")
@@ -590,7 +603,6 @@ def main():
             n_domains = apply_discover_result(state, parsed)
             log(f"   🧭 +{n_domains} حوزه‌ی جدید")
 
-            # اگر هیچ حوزه‌ی جدیدی کشف نشد → برو enhance
             if n_domains == 0:
                 log("   ⚠️ هیچ حوزه‌ی جدیدی کشف نشد — می‌رویم enhance")
                 enhance_prompt = build_enhance_prompt(state)
@@ -607,7 +619,6 @@ def main():
                     except Exception as e:
                         log(f"   ❌ enhance: {e}")
 
-        # ذخیره‌ی state
         state["iteration"] = iteration
         state.setdefault("mode_history", []).append(mode)
         state["mode_history"] = state["mode_history"][-50:]
@@ -616,7 +627,6 @@ def main():
         size_kb = SHARD_FILE.stat().st_size / 1024 if SHARD_FILE.exists() else 0
         log(f"   📊 مجموع: {len(state['dataset'])} intent | {size_kb:.1f}KB")
 
-    # پایان
     elapsed_total = (time.time() - start) / 60
     log("=" * 70)
     log(f"🏁 shard {SHARD_ID} پایان — {iteration} دور در {elapsed_total:.1f} دقیقه")
