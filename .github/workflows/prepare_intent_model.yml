@@ -1,0 +1,94 @@
+name: Prepare Intent Model
+
+# فقط دستی اجرا میشه — از حلقهی بیپایان جلوگیری میکنه
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-model:
+    runs-on: ubuntu-latest
+    # اضافه: اگه کامیت از طرف بات بود، اجرا نکن (double safety)
+    if: github.actor != 'github-actions[bot]'
+
+    steps:
+      - name: چکاوت مخزن
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: نصب پایتون
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: کش کردن pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('prepare_intent_model.py', 'intents.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: نصب پیشنیازها
+        run: |
+          python -m pip install --upgrade pip
+          pip install "optimum[onnxruntime]" onnxruntime onnxruntime-extensions transformers numpy
+
+      - name: اجرای اسکریپت آمادهسازی
+        run: python prepare_intent_model.py
+
+      - name: بررسی حجم خروجیها
+        run: |
+          echo "### حجم فایلهای تولیدشده" >> $GITHUB_STEP_SUMMARY
+          du -h onnx_export/model_int8.onnx onnx_export/tokenizer.onnx onnx_export/intent_embeddings.json >> $GITHUB_STEP_SUMMARY
+
+      - name: راهاندازی Git LFS (فقط اگه مدل >۹۵MB بود لازمه)
+        run: |
+          git lfs install --local
+          git lfs track "onnx_export/*.onnx"
+          if [ -d "app/src/main/assets" ]; then
+            git lfs track "app/src/main/assets/*.onnx"
+          fi
+          git add .gitattributes
+
+      - name: کپی خروجیها به assets اندروید (اگه وجود داره)
+        run: |
+          if [ -d "app/src/main/assets" ]; then
+            cp onnx_export/model_int8.onnx app/src/main/assets/
+            cp onnx_export/tokenizer.onnx app/src/main/assets/
+            cp onnx_export/intent_embeddings.json app/src/main/assets/
+            echo "✅ کپی شد به app/src/main/assets/"
+          fi
+
+      - name: کامیت و پوش
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add .gitattributes onnx_export/
+          if [ -d "app/src/main/assets" ]; then
+            git add app/src/main/assets/
+          fi
+
+          if git diff --cached --quiet; then
+            echo "ℹ️ چیزی برای کامیت نیست."
+            exit 0
+          fi
+
+          # [skip ci] از اجرای مجدد workflow جلوگیری میکنه
+          git commit -m "chore: rebuild intent model [skip ci]"
+
+          for attempt in 1 2 3; do
+            if git push; then
+              echo "✅ پوش موفق (تلاش $attempt)"
+              exit 0
+            fi
+            echo "⚠️ تلاش $attempt ناموفق — rebase و تلاش مجدد..."
+            git pull --rebase origin main || true
+            sleep $((RANDOM % 4 + 2))
+          done
+          echo "❌ پوش بعد از ۳ تلاش ناموفق بود."
+          exit 1
