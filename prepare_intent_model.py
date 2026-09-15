@@ -1,11 +1,11 @@
 """
-اسکریپت آماده‌سازی مدل embedding برای اپ StudyQuest.
+اسکریپت آمادهسازی مدل embedding برای اپ StudyQuest.
 
 مدل پایه: alphaedge-ai/multilingual-e5-small-fas-32768
-(همون E5-small با واژگان بهینه‌شده فارسی — حجم ~۳۴MB، دقت حفظ‌شده)
+(همون E5-small با واژگان بهینهشده فارسی — حجم ~۳۳MB پس از کوانتیزه)
 
-خروجی‌ها (به app/src/main/assets/ کپی شوند):
-  - model_int8.onnx          (~۲۰-۲۵ MB پس از کوانتیزه)
+خروجیها (به app/src/main/assets/ کپی شوند):
+  - model_int8.onnx          (~۳۳ MB)
   - tokenizer.onnx           (~۵ MB)
   - intent_embeddings.json   (~۱۰۰ KB)
 """
@@ -14,14 +14,14 @@ import json
 from pathlib import Path
 import numpy as np
 
-# ✅ مدل هرس‌شده فارسی به‌جای E5 خام
+# ✅ مدل هرسشده فارسی
 MODEL_ID = "alphaedge-ai/multilingual-e5-small-fas-32768"
 OUT_DIR = Path("onnx_export")
 OUT_DIR.mkdir(exist_ok=True)
 
 
 # ---------------------------------------------------------------
-# مرحله ۱: خروجی‌گرفتن مدل به ONNX
+# مرحله ۱: خروجیگرفتن مدل به ONNX
 # ---------------------------------------------------------------
 def export_model():
     from optimum.onnxruntime import ORTModelForFeatureExtraction
@@ -37,14 +37,14 @@ def export_model():
 
 
 # ---------------------------------------------------------------
-# مرحله ۲: کوانتیزه‌سازی int8
+# مرحله ۲: کوانتیزهسازی int8
 # ---------------------------------------------------------------
 def quantize_model():
     from onnxruntime.quantization import quantize_dynamic, QuantType
 
     src = OUT_DIR / "model.onnx"
     dst = OUT_DIR / "model_int8.onnx"
-    print("🔧 کوانتیزه‌سازی int8 ...")
+    print("🔧 کوانتیزهسازی int8 ...")
 
     quantize_dynamic(
         model_input=str(src),
@@ -58,17 +58,23 @@ def quantize_model():
 
 
 # ---------------------------------------------------------------
-# مرحله ۳: ساخت توکنایزر به‌صورت گراف ONNX
+# مرحله ۳: ساخت توکنایزر بهصورت گراف ONNX
 # ---------------------------------------------------------------
 def export_tokenizer_onnx():
+    """
+    ⚠️ نکته مهم: onnxruntime_extensions فقط توکنایزرهای slow را پشتیبانی میکند.
+    پس حتماً باید use_fast=False پاس بدهیم، وگرنه خطای
+    «Unsupported processor/tokenizer: PreTrainedTokenizerFast» میگیریم.
+    """
     from transformers import AutoTokenizer
     from onnxruntime_extensions import gen_processing_models
 
     print("🔧 ساخت گراف ONNX توکنایزر ...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
-    # ورودی باید خودِ توکنایزر باشد، نه مسیر پوشه
-    # (خطای KeyError: 'onnx_export' قبلاً از همین اشتباه می‌آمد)
+    # ✅ کلید فیکس: use_fast=False
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=False)
+    print(f"   کلاس توکنایزر: {type(tokenizer).__name__}")
+
     result = gen_processing_models(
         tokenizer,
         pre_kwargs={"WITH_DEFAULT_INPUTS": True},
@@ -83,18 +89,19 @@ def export_tokenizer_onnx():
 
 
 # ---------------------------------------------------------------
-# مرحله ۴: محاسبه‌ی embedding جمله‌های نمونه هر intent
+# مرحله ۴: محاسبهی embedding جملههای نمونه هر intent
 # ---------------------------------------------------------------
 def build_intent_embeddings():
     import onnxruntime as ort
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    # ✅ use_fast=False برای هماهنگی با توکنایزر گراف ONNX
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=False)
     session = ort.InferenceSession(str(OUT_DIR / "model_int8.onnx"))
 
-    # ✅ کشف ورودی‌های لازم مدل — یک‌بار در بیرون از حلقه
+    # کشف ورودیهای لازم مدل (فیکس token_type_ids)
     required_inputs = {i.name for i in session.get_inputs()}
-    print(f"ℹ️ ورودی‌های مدل: {sorted(required_inputs)}")
+    print(f"ℹ️ ورودیهای مدل: {sorted(required_inputs)}")
 
     def embed(text: str) -> np.ndarray:
         inputs = tokenizer(
@@ -104,7 +111,7 @@ def build_intent_embeddings():
             truncation=True,
             max_length=128,
         )
-        # ✅ فیکس token_type_ids: فقط ورودی‌هایی که مدل می‌خواهد را پاس بده
+        # فقط ورودیهایی که مدل میخواهد
         feed = {k: v for k, v in inputs.items() if k in required_inputs}
 
         outputs = session.run(None, feed)
@@ -112,7 +119,7 @@ def build_intent_embeddings():
         mask = inputs["attention_mask"][..., None]          # (1, seq_len, 1)
         pooled = (last_hidden * mask).sum(1) / mask.sum(1)  # mean pooling
         vec = pooled[0]
-        return vec / np.linalg.norm(vec)                    # نرمال‌سازی کسینوسی
+        return vec / np.linalg.norm(vec)                    # نرمالسازی کسینوسی
 
     with open("intents.json", encoding="utf-8") as f:
         intents = json.load(f)
