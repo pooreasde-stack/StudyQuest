@@ -1,6 +1,5 @@
 name: Prepare Intent Model
 
-# فقط دستی اجرا می‌شود — از حلقه‌ی بی‌پایان جلوگیری می‌کند
 on:
   workflow_dispatch: {}
 
