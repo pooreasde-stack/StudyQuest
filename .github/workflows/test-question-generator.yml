@@ -1,0 +1,62 @@
+name: Test SemanticQAGen
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate-question:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Ollama server
+        uses: pydantic/ollama-action@v3
+        with:
+          model: 'llama3.2'
+
+      - name: Install SemanticQAGen
+        run: |
+          pip install semantic-qa-gen
+
+      - name: Create test document
+        run: |
+          cat > /tmp/test_formula.txt << 'EOF'
+          The Ideal Gas Law is a fundamental equation in thermodynamics, expressed as PV = nRT.
+          In this equation, P represents pressure, V represents volume, n is the number of moles of gas,
+          R is the ideal gas constant (approximately 8.314 J/(mol·K)), and T is the temperature in Kelvin.
+          This law describes the behavior of an ideal gas under various conditions of pressure, volume, and temperature.
+          EOF
+
+      - name: Generate questions
+        env:
+          OPENAI_API_BASE: http://localhost:11434/v1
+          OPENAI_API_KEY: "ollama"
+        run: |
+          python << 'PYEOF'
+          from semantic_qa_gen import SemanticQAGen
+          import json
+
+          qa_gen = SemanticQAGen()
+          result = qa_gen.process_document("/tmp/test_formula.txt")
+
+          with open("generated_qa.json", "w", encoding="utf-8") as f:
+              json.dump(result, f, ensure_ascii=False, indent=2)
+
+          print("Questions generated successfully!")
+          print(json.dumps(result, ensure_ascii=False, indent=2)[:2000])
+          PYEOF
+
+      - name: Upload Generated Q&A
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-qa
+          path: generated_qa.json
+          retention-days: 7
