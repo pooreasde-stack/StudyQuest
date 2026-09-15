@@ -1622,5 +1622,157 @@
     "consistencyDays": 0,
     "clientTimestamp": "2026-09-15T18:20:00Z",
     "receivedAt": "2026-09-15T18:20:20.038131Z"
+  },
+  {
+    "userId": "bot_01",
+    "eventId": "daily_study",
+    "minutes": 73,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T11:27:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106147Z"
+  },
+  {
+    "userId": "bot_02",
+    "eventId": "daily_study",
+    "minutes": 82,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T11:33:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106158Z"
+  },
+  {
+    "userId": "bot_03",
+    "eventId": "daily_study",
+    "minutes": 46,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T17:41:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106164Z"
+  },
+  {
+    "userId": "bot_04",
+    "eventId": "daily_study",
+    "minutes": 65,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T14:22:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106169Z"
+  },
+  {
+    "userId": "bot_06",
+    "eventId": "daily_study",
+    "minutes": 82,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T13:08:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106175Z"
+  },
+  {
+    "userId": "bot_09",
+    "eventId": "daily_study",
+    "minutes": 79,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T14:16:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106180Z"
+  },
+  {
+    "userId": "bot_10",
+    "eventId": "daily_study",
+    "minutes": 80,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T07:11:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106184Z"
+  },
+  {
+    "userId": "bot_12",
+    "eventId": "daily_study",
+    "minutes": 75,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T16:44:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106189Z"
+  },
+  {
+    "userId": "bot_14",
+    "eventId": "daily_study",
+    "minutes": 24,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T15:12:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106193Z"
+  },
+  {
+    "userId": "bot_16",
+    "eventId": "daily_study",
+    "minutes": 34,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T07:19:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106198Z"
+  },
+  {
+    "userId": "bot_17",
+    "eventId": "daily_study",
+    "minutes": 58,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T10:41:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106203Z"
+  },
+  {
+    "userId": "bot_18",
+    "eventId": "daily_study",
+    "minutes": 17,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T03:57:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106208Z"
+  },
+  {
+    "userId": "bot_19",
+    "eventId": "daily_study",
+    "minutes": 25,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T04:24:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106212Z"
+  },
+  {
+    "userId": "bot_23",
+    "eventId": "daily_study",
+    "minutes": 41,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T17:53:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106217Z"
+  },
+  {
+    "userId": "bot_25",
+    "eventId": "daily_study",
+    "minutes": 28,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T17:40:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106221Z"
+  },
+  {
+    "userId": "bot_26",
+    "eventId": "daily_study",
+    "minutes": 23,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T05:31:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106258Z"
+  },
+  {
+    "userId": "bot_27",
+    "eventId": "daily_study",
+    "minutes": 29,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T04:54:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106266Z"
+  },
+  {
+    "userId": "bot_28",
+    "eventId": "daily_study",
+    "minutes": 34,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T10:14:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106270Z"
+  },
+  {
+    "userId": "bot_29",
+    "eventId": "daily_study",
+    "minutes": 68,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-15T13:08:00Z",
+    "receivedAt": "2026-09-15T19:24:23.106276Z"
   }
 ]
