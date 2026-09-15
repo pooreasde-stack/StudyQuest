@@ -1,0 +1,135 @@
+name: Generate Intent Dataset (Matrix + Versioned)
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: 'تعداد shardهای موازی'
+        default: '20'
+      model:
+        description: 'مدل Ollama'
+        default: 'qwen2.5:7b'
+      time_budget_min:
+        description: 'بودجه‌ی زمانی هر shard (دقیقه)'
+        default: '280'
+      intents_per_round:
+        description: 'تعداد intent در هر دور'
+        default: '40'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      shard_list: ${{ steps.ver.outputs.shard_list }}
+    steps:
+      - name: محاسبه نسخه و لیست shardها
+        id: ver
+        run: |
+          # نسخه = شماره‌ی run + شماره‌ی تلاش (برای اطمینان از یکتایی)
+          VERSION="v${{ github.run_number }}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "📌 نسخه‌ی این اجرا: $VERSION"
+
+          # لیست shardها به‌صورت JSON array
+          N=${{ github.event.inputs.shards }}
+          SHARDS=$(python3 -c "import json; print(json.dumps(list(range($N))))")
+          echo "shard_list=$SHARDS" >> $GITHUB_OUTPUT
+          echo "📦 تعداد shardها: $N"
+          echo "🔢 لیست: $SHARDS"
+
+  generate-shard:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJson(needs.prepare.outputs.shard_list) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: نصب Ollama
+        run: |
+          sudo apt-get update && sudo apt-get install -y zstd
+          curl -fsSL -o ollama.tar.zst \
+            https://github.com/ollama/ollama/releases/latest/download/ollama-linux-amd64.tar.zst
+          sudo tar --zstd -C /usr -xf ollama.tar.zst
+          rm -f ollama.tar.zst
+          ollama --version
+
+      - name: راه‌اندازی Ollama و دانلود مدل
+        run: |
+          ollama serve > /tmp/ollama.log 2>&1 &
+          sleep 10
+          ollama pull ${{ github.event.inputs.model }}
+
+      - name: نصب وابستگی‌های پایتون
+        run: pip install requests
+
+      - name: اجرای shard ${{ matrix.shard }}
+        env:
+          MODEL: ${{ github.event.inputs.model }}
+          SHARD_ID: ${{ matrix.shard }}
+          TOTAL_SHARDS: ${{ github.event.inputs.shards }}
+          TIME_BUDGET_MIN: ${{ github.event.inputs.time_budget_min }}
+          INTENTS_PER_ROUND: ${{ github.event.inputs.intents_per_round }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: python scripts/generate_shard.py
+
+      - name: آپلود آرتیفکت shard ${{ matrix.shard }} (نسخه‌دار)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intent-shard-${{ needs.prepare.outputs.version }}-${{ matrix.shard }}
+          path: output/
+          retention-days: 30
+          if-no-files-found: warn
+
+  merge:
+    needs: [prepare, generate-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: دانلود همه‌ی shardها
+        uses: actions/download-artifact@v4
+        with:
+          pattern: intent-shard-${{ needs.prepare.outputs.version }}-*
+          path: /tmp/shards
+
+      - name: ادغام shardها
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SHARDS: ${{ github.event.inputs.shards }}
+        run: |
+          pip install requests
+          python scripts/merge_shards.py
+
+      - name: آپلود دیتاست نهایی (نسخه‌دار)
+        uses: actions/upload-artifact@v4
+        with:
+          name: intent-dataset-${{ needs.prepare.outputs.version }}
+          path: /tmp/merged/
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: خلاصه‌ی نهایی
+        run: |
+          echo "## 📊 نسخه‌ی ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f /tmp/merged/stats.json ]; then
+            cat /tmp/merged/stats.json >> $GITHUB_STEP_SUMMARY
+          fi
