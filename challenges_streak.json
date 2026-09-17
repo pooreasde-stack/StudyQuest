@@ -101,9 +101,6 @@
     "lastWeekRank": null,
     "weeksOnBoardStreak": 0,
     "days": {
-      "2026-08-10": "miss",
-      "2026-08-11": "miss",
-      "2026-08-12": "miss",
       "2026-08-13": "miss",
       "2026-08-14": "miss",
       "2026-08-15": "frozen",
@@ -135,9 +132,12 @@
       "2026-09-10": "miss",
       "2026-09-11": "miss",
       "2026-09-12": "frozen",
-      "2026-09-13": "miss"
+      "2026-09-13": "miss",
+      "2026-09-14": "miss",
+      "2026-09-15": "miss",
+      "2026-09-16": "miss"
     },
-    "lastFinalizedDate": "2026-09-13",
+    "lastFinalizedDate": "2026-09-16",
     "weeklyRecaps": []
   }
 }
