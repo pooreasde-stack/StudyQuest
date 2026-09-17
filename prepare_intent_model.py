@@ -69,10 +69,12 @@ def quantize_model():
 # (این کار باعث می‌شه تو جاوا نیازی به پیاده‌سازی دستی SentencePiece/BPE نباشه)
 # ---------------------------------------------------------------
 def export_tokenizer_onnx():
+    from transformers import AutoTokenizer
     from onnxruntime_extensions import gen_processing_models
 
     print("در حال ساخت گراف ONNX توکنایزر ...")
-    pre_m, _ = gen_processing_models(str(OUT_DIR), pre_kwargs={"WITH_DEFAULT_INPUTS": True})
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    pre_m, _ = gen_processing_models(tokenizer, pre_kwargs={"WITH_DEFAULT_INPUTS": True})
     tok_path = OUT_DIR / "tokenizer.onnx"
     with open(tok_path, "wb") as f:
         f.write(pre_m.SerializeToString())
