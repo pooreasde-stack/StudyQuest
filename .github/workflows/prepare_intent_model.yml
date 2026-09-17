@@ -1,6 +1,5 @@
 name: Prepare Intent Model
 
-# اجرای دستی از تب Actions، یا خودکار هروقت این دو فایل تغییر کنن
 on:
   workflow_dispatch: {}
   push:
@@ -33,29 +32,31 @@ jobs:
       - name: اجرای اسکریپت آماده‌سازی مدل
         run: python prepare_intent_model.py
 
-      - name: بررسی حجم خروجی‌ها و اسم واقعی ورودی/خروجی گراف‌ها
+      - name: بررسی حجم خروجی‌ها و اسم واقعی ورودی/خروجی گراف
         run: |
           echo "### حجم فایل‌های تولیدشده" >> $GITHUB_STEP_SUMMARY
-          du -h onnx_export/model_int8.onnx onnx_export/tokenizer.onnx onnx_export/intent_embeddings.json >> $GITHUB_STEP_SUMMARY
-          echo "### اسم واقعی ورودی/خروجی گراف‌ها (io_names.json)" >> $GITHUB_STEP_SUMMARY
+          du -h onnx_export/model_int8.onnx onnx_export/intent_embeddings.json >> $GITHUB_STEP_SUMMARY
+          du -h onnx_export/tokenizer_hf/tokenizer.json >> $GITHUB_STEP_SUMMARY
+          echo "### اسم واقعی ورودی/خروجی گراف مدل (io_names.json)" >> $GITHUB_STEP_SUMMARY
           echo '```json' >> $GITHUB_STEP_SUMMARY
           cat onnx_export/io_names.json >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           SIZE_BYTES=$(stat -c%s onnx_export/model_int8.onnx)
           if [ "$SIZE_BYTES" -gt 95000000 ]; then
-            echo "⚠️ فایل مدل نزدیک یا بالای ۱۰۰ مگابایته — GitHub بدون Git LFS اجازه‌ی فایل بالای ۱۰۰MB رو نمی‌ده." >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ فایل مدل نزدیک یا بالای ۱۰۰ مگابایته." >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: کپی خروجی‌ها به پوشه assets اندروید (اگه این پوشه تو مخزن باشه)
         run: |
           if [ -d "app/src/main/assets" ]; then
             cp onnx_export/model_int8.onnx app/src/main/assets/
-            cp onnx_export/tokenizer.onnx app/src/main/assets/
             cp onnx_export/intent_embeddings.json app/src/main/assets/
             cp onnx_export/io_names.json app/src/main/assets/
+            mkdir -p app/src/main/assets/tokenizer_hf
+            cp onnx_export/tokenizer_hf/* app/src/main/assets/tokenizer_hf/
             echo "کپی شد به app/src/main/assets/"
           else
-            echo "پوشه app/src/main/assets پیدا نشد — فایل‌ها فقط داخل onnx_export/ کامیت می‌شن؛ خودت جابه‌جاشون کن."
+            echo "پوشه app/src/main/assets پیدا نشد."
           fi
 
       - name: کامیت و پوش خروجی‌ها به مخزن
@@ -65,6 +66,6 @@ jobs:
           file_pattern: |
             onnx_export/**
             app/src/main/assets/model_int8.onnx
-            app/src/main/assets/tokenizer.onnx
             app/src/main/assets/intent_embeddings.json
             app/src/main/assets/io_names.json
+            app/src/main/assets/tokenizer_hf/**
