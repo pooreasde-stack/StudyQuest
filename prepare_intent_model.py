@@ -1,32 +1,22 @@
 """
 اسکریپت آماده‌سازی مدل embedding فارسی برای StudyQuest.
-این را یک‌بار روی کامپیوتر خودت یا از طریق GitHub Actions اجرا کن.
 
 مدل: alphaedge-ai/multilingual-e5-small-fas-32768
-(نسخه‌ی از قبل هرس‌شده‌ی multilingual-e5-small، مخصوص فارسی — واقعی و آماده،
-نیاز به هیچ هرس دستی نداره)
-
-نصب پیش‌نیازها:
-    pip install "optimum[onnxruntime]" onnxruntime onnxruntime-extensions onnx transformers numpy
 
 خروجی‌ها (این ۴ فایل رو به app/src/main/assets/ کپی کن):
-  - onnx_export/model_int8.onnx          کوانتیزه‌شده int8، تخمین ~۳۳ مگابایت
-  - onnx_export/tokenizer.onnx           توکنایزر به‌صورت گراف ONNX جدا
-  - onnx_export/intent_embeddings.json   یک بردار «میانگین» (centroid) برای هر intent
-  - onnx_export/io_names.json            اسم واقعی ورودی/خروجی گراف‌ها (خودکار، بدون Netron)
+  - onnx_export/model_int8.onnx                 کوانتیزه‌شده int8، ~۳۳ مگابایت
+  - onnx_export/intent_embeddings.json          بردار میانگین (centroid) هر intent
+  - onnx_export/io_names.json                   اسم واقعی ورودی/خروجی گراف مدل
+  - onnx_export/tokenizer_hf/tokenizer.json     توکنایزر برای DJL در Android
 
-⚠️ چرا centroid و نه بردار هر نمونه:
-اگه intents.json هزاران نمونه داشته باشه (که الان داره)، ذخیره‌ی بردار
-تک‌تک نمونه‌ها فایل embedding رو به چند ده مگابایت می‌رسونه. به‌جاش، همه‌ی
-نمونه‌های هر intent رو embed می‌کنیم، میانگین می‌گیریم، و فقط همون یک بردار
-میانگین (renormalize شده) رو ذخیره می‌کنیم. حجم فایل نهایی صرفاً به تعداد
-intent‌ها بستگی داره، نه تعداد نمونه‌ها — یعنی می‌تونی هر چقدر نمونه
-می‌خوای برای دقت بهتر بدی، بدون نگرانی از حجم.
-
-⚠️ این اسکریپت رو خودم (چون دسترسی اینترنت ندارم) اجرا/تست نکردم.
+⚠️ نکته‌ی مهم:
+توکنایزر ONNX ساخته نمی‌شود چون onnxruntime_extensions فقط توکنایزرهای slow
+را پشتیبانی می‌کند و این مدل هرس‌شده فقط فایل fast (tokenizer.json) دارد.
+در Android از کتابخانه‌ی ai.djl.huggingface:tokenizers استفاده کن.
 """
 
 import json
+import shutil
 from pathlib import Path
 import numpy as np
 
@@ -65,24 +55,38 @@ def quantize_model():
 
 
 # ---------------------------------------------------------------
-# مرحله ۳: ساخت توکنایزر به‌صورت گراف ONNX جدا
-# (این کار باعث می‌شه تو جاوا نیازی به پیاده‌سازی دستی SentencePiece/BPE نباشه)
+# مرحله ۳: ذخیره‌ی توکنایزر برای استفاده در Android
 # ---------------------------------------------------------------
-def export_tokenizer_onnx():
-    from transformers import AutoTokenizer
-    from onnxruntime_extensions import gen_processing_models
+def save_tokenizer_for_android():
+    """
+    مدل هرس‌شده فقط توکنایزر fast (tokenizer.json) دارد.
+    کتابخانه‌ی onnxruntime_extensions فقط slow tokenizer را پشتیبانی می‌کند
+    (خطای: Unsupported processor/tokenizer: PreTrainedTokenizerFast).
+    پس به‌جای ساخت گراف ONNX، فایل توکنایزر را در پوشه‌ی جدا کپی می‌کنیم
+    تا در سمت Android با کتابخانه‌ی DJL HuggingFace Tokenizers بارگذاری شود.
+    """
+    print("در حال ذخیره‌ی توکنایزر برای Android ...")
 
-    print("در حال ساخت گراف ONNX توکنایزر ...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    pre_m, _ = gen_processing_models(tokenizer, pre_kwargs={"WITH_DEFAULT_INPUTS": True})
-    tok_path = OUT_DIR / "tokenizer.onnx"
-    with open(tok_path, "wb") as f:
-        f.write(pre_m.SerializeToString())
-    print("✅ توکنایزر ONNX ساخته شد →", tok_path)
+    tokenizer_dir = OUT_DIR / "tokenizer_hf"
+    tokenizer_dir.mkdir(exist_ok=True)
+
+    src_json = OUT_DIR / "tokenizer.json"
+    if not src_json.exists():
+        raise FileNotFoundError(f"فایل tokenizer.json پیدا نشد در {OUT_DIR}")
+
+    shutil.copy(src_json, tokenizer_dir / "tokenizer.json")
+
+    for fname in ["tokenizer_config.json", "special_tokens_map.json"]:
+        src = OUT_DIR / fname
+        if src.exists():
+            shutil.copy(src, tokenizer_dir / fname)
+
+    size_kb = (tokenizer_dir / "tokenizer.json").stat().st_size / 1024
+    print(f"✅ توکنایزر ذخیره شد → {tokenizer_dir}  ({size_kb:.0f} کیلوبایت)")
 
 
 # ---------------------------------------------------------------
-# مرحله ۴: بازرسی خودکار اسم ورودی/خروجی گراف‌ها — به‌جای باز کردن دستی با Netron
+# مرحله ۴: بازرسی خودکار اسم ورودی/خروجی گراف مدل
 # ---------------------------------------------------------------
 def inspect_onnx_io():
     import onnx
@@ -95,18 +99,15 @@ def inspect_onnx_io():
         }
 
     io_map = {
-        "tokenizer": names_of(OUT_DIR / "tokenizer.onnx"),
         "model": names_of(OUT_DIR / "model_int8.onnx"),
     }
     out_path = OUT_DIR / "io_names.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(io_map, f, ensure_ascii=False, indent=2)
 
-    print("\n=== اسم واقعی ورودی/خروجی گراف‌ها (به‌جای چک دستی با Netron) ===")
+    print("\n=== اسم واقعی ورودی/خروجی گراف مدل ===")
     print(json.dumps(io_map, ensure_ascii=False, indent=2))
     print(f"✅ ذخیره شد → {out_path}")
-    print("   این فایل رو هم به app/src/main/assets/ کپی کن — IntentMatcher.java")
-    print("   خودش این اسم‌ها رو از روی همین فایل می‌خونه، دیگه هاردکد نیست.")
     return io_map
 
 
@@ -154,10 +155,13 @@ def build_intent_embeddings():
 if __name__ == "__main__":
     export_model()
     size_mb = quantize_model()
-    export_tokenizer_onnx()
+    save_tokenizer_for_android()
     io_map = inspect_onnx_io()
     build_intent_embeddings()
     print("\n=== خلاصه ===")
     print(f"حجم مدل کوانتیزه: {size_mb:.1f} مگابایت")
     print("۴ فایل رو به app/src/main/assets/ کپی کن:")
-    print("  model_int8.onnx, tokenizer.onnx, intent_embeddings.json, io_names.json")
+    print("  model_int8.onnx")
+    print("  intent_embeddings.json")
+    print("  io_names.json")
+    print("  tokenizer_hf/tokenizer.json")
