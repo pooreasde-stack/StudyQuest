@@ -32,21 +32,18 @@ jobs:
       - name: اجرای اسکریپت آماده‌سازی مدل
         run: python prepare_intent_model.py
 
-      - name: بررسی حجم خروجی‌ها و اسم واقعی ورودی/خروجی گراف
+      - name: بررسی حجم خروجی‌ها
         run: |
           echo "### حجم فایل‌های تولیدشده" >> $GITHUB_STEP_SUMMARY
-          du -h onnx_export/model_int8.onnx onnx_export/intent_embeddings.json >> $GITHUB_STEP_SUMMARY
+          du -h onnx_export/model_int8.onnx >> $GITHUB_STEP_SUMMARY
+          du -h onnx_export/intent_embeddings.json >> $GITHUB_STEP_SUMMARY
           du -h onnx_export/tokenizer_hf/tokenizer.json >> $GITHUB_STEP_SUMMARY
-          echo "### اسم واقعی ورودی/خروجی گراف مدل (io_names.json)" >> $GITHUB_STEP_SUMMARY
+          echo "### اسم واقعی ورودی/خروجی گراف مدل" >> $GITHUB_STEP_SUMMARY
           echo '```json' >> $GITHUB_STEP_SUMMARY
           cat onnx_export/io_names.json >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          SIZE_BYTES=$(stat -c%s onnx_export/model_int8.onnx)
-          if [ "$SIZE_BYTES" -gt 95000000 ]; then
-            echo "⚠️ فایل مدل نزدیک یا بالای ۱۰۰ مگابایته." >> $GITHUB_STEP_SUMMARY
-          fi
 
-      - name: کپی خروجی‌ها به پوشه assets اندروید (اگه این پوشه تو مخزن باشه)
+      - name: کپی خروجی‌ها به پوشه assets اندروید (اگه وجود دارد)
         run: |
           if [ -d "app/src/main/assets" ]; then
             cp onnx_export/model_int8.onnx app/src/main/assets/
@@ -64,7 +61,16 @@ jobs:
         with:
           commit_message: "chore: بازسازی مدل embedding intent [auto]"
           file_pattern: |
-            onnx_export/**
+            onnx_export/model_int8.onnx
+            onnx_export/intent_embeddings.json
+            onnx_export/io_names.json
+            onnx_export/tokenizer.json
+            onnx_export/tokenizer_config.json
+            onnx_export/special_tokens_map.json
+            onnx_export/config.json
+            onnx_export/tokenizer_hf/tokenizer.json
+            onnx_export/tokenizer_hf/tokenizer_config.json
+            onnx_export/tokenizer_hf/special_tokens_map.json
             app/src/main/assets/model_int8.onnx
             app/src/main/assets/intent_embeddings.json
             app/src/main/assets/io_names.json
