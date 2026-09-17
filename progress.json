@@ -2414,5 +2414,125 @@
     "consistencyDays": 0,
     "clientTimestamp": "2026-09-17T14:53:00Z",
     "receivedAt": "2026-09-17T14:53:20.517437Z"
+  },
+  {
+    "userId": "bot_01",
+    "eventId": "daily_study",
+    "minutes": 23,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T06:07:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305557Z"
+  },
+  {
+    "userId": "bot_03",
+    "eventId": "daily_study",
+    "minutes": 50,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T10:43:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305564Z"
+  },
+  {
+    "userId": "bot_04",
+    "eventId": "daily_study",
+    "minutes": 60,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T09:18:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305568Z"
+  },
+  {
+    "userId": "bot_05",
+    "eventId": "daily_study",
+    "minutes": 40,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T11:52:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305571Z"
+  },
+  {
+    "userId": "bot_06",
+    "eventId": "daily_study",
+    "minutes": 65,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T12:47:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305574Z"
+  },
+  {
+    "userId": "bot_08",
+    "eventId": "daily_study",
+    "minutes": 84,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T09:16:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305577Z"
+  },
+  {
+    "userId": "bot_09",
+    "eventId": "daily_study",
+    "minutes": 36,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T07:23:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305579Z"
+  },
+  {
+    "userId": "bot_10",
+    "eventId": "daily_study",
+    "minutes": 80,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T12:07:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305582Z"
+  },
+  {
+    "userId": "bot_13",
+    "eventId": "daily_study",
+    "minutes": 33,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T07:15:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305585Z"
+  },
+  {
+    "userId": "bot_16",
+    "eventId": "daily_study",
+    "minutes": 59,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T13:25:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305588Z"
+  },
+  {
+    "userId": "bot_18",
+    "eventId": "daily_study",
+    "minutes": 86,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T15:07:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305590Z"
+  },
+  {
+    "userId": "bot_22",
+    "eventId": "daily_study",
+    "minutes": 25,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T14:15:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305593Z"
+  },
+  {
+    "userId": "bot_23",
+    "eventId": "daily_study",
+    "minutes": 88,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T09:11:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305595Z"
+  },
+  {
+    "userId": "bot_24",
+    "eventId": "daily_study",
+    "minutes": 56,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T12:19:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305598Z"
+  },
+  {
+    "userId": "bot_25",
+    "eventId": "daily_study",
+    "minutes": 73,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-17T07:36:00Z",
+    "receivedAt": "2026-09-17T15:34:08.305601Z"
   }
 ]
