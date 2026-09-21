@@ -3990,5 +3990,13 @@
     "consistencyDays": 0,
     "clientTimestamp": "2026-09-21T17:01:00Z",
     "receivedAt": "2026-09-21T17:01:22.316162Z"
+  },
+  {
+    "userId": "bot_29",
+    "eventId": "daily_study",
+    "minutes": 41,
+    "consistencyDays": 0,
+    "clientTimestamp": "2026-09-21T17:36:00Z",
+    "receivedAt": "2026-09-21T17:36:22.344079Z"
   }
 ]
